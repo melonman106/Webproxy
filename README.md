@@ -56,6 +56,25 @@ type-checks the Worker, and runs `wrangler deploy` for you. Your app
 goes live at `https://tunnel-proxy.<your-subdomain>.workers.dev`
 (rename the Worker by changing `name` in `wrangler.toml`).
 
+### A note on Cloudflare's "Workers Builds" (dashboard Git integration)
+
+If you connect this repo directly in the Cloudflare dashboard (Workers &
+Pages → Create → Connect to Git) instead of using the GitHub Actions
+workflow above, Cloudflare runs its own build system called **Workers
+Builds**. By default it just runs `<package manager> install` then your
+deploy command (`npx wrangler deploy`) — it does **not** run the client
+build in between, and it explicitly does not honor a `[build]` section
+in `wrangler.toml`.
+
+This repo works around that with a `postinstall` script in the root
+`package.json` that builds the client automatically as part of the
+install step, so `client/dist` exists by the time `wrangler deploy`
+runs — no dashboard configuration required. If you ever see a
+`client/dist does not exist` error from Workers Builds, check that this
+`postinstall` script is still intact, or explicitly set a **Build
+command** in the project's Settings → Build to
+`npm run build:client` as a manual override.
+
 ### Deploying manually instead
 
 ```bash
