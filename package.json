@@ -9,6 +9,6 @@
     "deploy": "npm run build:client && npm run typecheck:worker && wrangler deploy"
   },
   "devDependencies": {
-    "wrangler": "^3.114.17"
+    "wrangler": "^4.125.0"
   }
 }
