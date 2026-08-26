@@ -3,8 +3,8 @@
   "private": true,
   "scripts": {
     "postinstall": "npm run build:client",
-    "build:client": "npm install --prefix client && npm run build --prefix client",
-    "typecheck:worker": "npm install --prefix worker && npm run typecheck --prefix worker",
+    "build:client": "cd client && npm install && npm run build",
+    "typecheck:worker": "cd worker && npm install && npm run typecheck",
     "dev": "npm run build:client && wrangler dev",
     "deploy": "npm run build:client && npm run typecheck:worker && wrangler deploy"
   },
