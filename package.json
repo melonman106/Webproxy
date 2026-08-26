@@ -1,0 +1,13 @@
+{
+  "name": "tunnel-proxy",
+  "private": true,
+  "scripts": {
+    "build:client": "npm install --prefix client && npm run build --prefix client",
+    "typecheck:worker": "npm install --prefix worker && npm run typecheck --prefix worker",
+    "dev": "npm run build:client && wrangler dev",
+    "deploy": "npm run build:client && npm run typecheck:worker && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.17"
+  }
+}

@@ -1,0 +1,19 @@
+name = "tunnel-proxy"
+main = "worker/src/index.ts"
+compatibility_date = "2026-08-18"
+compatibility_flags = ["nodejs_compat"]
+
+# The built React console is served straight from the Worker. Any request
+# that doesn't match a built asset file (e.g. /proxy, /health) falls
+# through to the fetch handler in worker/src/index.ts.
+[assets]
+directory = "./client/dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "COOKIE_JAR"
+class_name = "CookieJar"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CookieJar"]
