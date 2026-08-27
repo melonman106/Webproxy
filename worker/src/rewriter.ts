@@ -1,15 +1,20 @@
-/**
- * URL/HTML/CSS rewriting for the proxy, built on Cloudflare's native
- * streaming HTMLRewriter — no DOM parsing library needed, and it never
- * buffers the whole page into memory.
- */
+// worker/src/rewriter.ts
 
 export function toProxyUrl(base: string, target: string): string {
   try {
+    if (
+      !target ||
+      target.startsWith("#") ||
+      target.startsWith("data:") ||
+      target.startsWith("mailto:") ||
+      target.startsWith("tel:") ||
+      target.startsWith("javascript:")
+    ) {
+      return target;
+    }
     const absolute = new URL(target, base).toString();
     return `/proxy?url=${encodeURIComponent(absolute)}`;
   } catch {
-    // javascript:, mailto:, #anchors, etc. are left untouched.
     return target;
   }
 }
@@ -17,10 +22,175 @@ export function toProxyUrl(base: string, target: string): string {
 const CSS_URL_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
 export function rewriteCssText(css: string, baseUrl: string): string {
-  return css.replace(CSS_URL_RE, (match, quote, url) => {
+  return css.replace(CSS_URL_RE, (match, quote: string, url: string) => {
     if (url.startsWith("data:")) return match;
     return `url(${quote}${toProxyUrl(baseUrl, url)}${quote})`;
   });
+}
+
+export function buildShim(baseUrl: string): string {
+  return `<script>
+(function () {
+  var REAL_BASE = ${JSON.stringify(baseUrl)};
+
+  function isProxied(u) {
+    return /^\\/proxy\\?url=/.test(u) || u.indexOf("/proxy?url=") === 0;
+  }
+
+  function toHttpProxy(u) {
+    try {
+      if (!u || u === "" || u === "#" ||
+          u.startsWith("javascript:") || u.startsWith("data:") ||
+          u.startsWith("mailto:") || u.startsWith("tel:") ||
+          u.startsWith("blob:") || isProxied(u))
+        return u;
+      var abs = new URL(u, REAL_BASE).toString();
+      return "/proxy?url=" + encodeURIComponent(abs);
+    } catch (e) { return u; }
+  }
+
+  function toWsProxy(u) {
+    try {
+      var wsBase = REAL_BASE.replace(/^http/, "ws");
+      var abs = new URL(u, wsBase).toString();
+      var wsScheme = location.protocol === "https:" ? "wss:" : "ws:";
+      return wsScheme + "//" + location.host + "/proxy?url=" + encodeURIComponent(abs);
+    } catch (e) { return u; }
+  }
+
+  var origFetch = window.fetch;
+  window.fetch = function (input, init) {
+    try {
+      var url = typeof input === "string" ? input : (input && input.url);
+      if (url && !isProxied(url)) {
+        var proxied = toHttpProxy(url);
+        input = typeof input === "string" ? proxied : new Request(proxied, input);
+      }
+    } catch (e) {}
+    return origFetch.call(this, input, init);
+  };
+
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    var args = Array.prototype.slice.call(arguments);
+    try {
+      if (url && !isProxied(url)) args[1] = toHttpProxy(url);
+    } catch (e) {}
+    return origOpen.apply(this, args);
+  };
+
+  var OrigWebSocket = window.WebSocket;
+  function PatchedWebSocket(url, protocols) {
+    return new OrigWebSocket(toWsProxy(url), protocols);
+  }
+  PatchedWebSocket.prototype = OrigWebSocket.prototype;
+  PatchedWebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+  PatchedWebSocket.OPEN = OrigWebSocket.OPEN;
+  PatchedWebSocket.CLOSING = OrigWebSocket.CLOSING;
+  PatchedWebSocket.CLOSED = OrigWebSocket.CLOSED;
+  window.WebSocket = PatchedWebSocket;
+
+  var origWindowOpen = window.open;
+  window.open = function (url, target, features) {
+    try {
+      if (url && !isProxied(url)) url = toHttpProxy(url);
+    } catch (e) {}
+    return origWindowOpen.call(this, url, target, features);
+  };
+
+  try {
+    var origAssign = Location.prototype.assign;
+    Location.prototype.assign = function (url) {
+      if (url && !isProxied(url)) url = toHttpProxy(url);
+      return origAssign.call(this, url);
+    };
+    var origReplace = Location.prototype.replace;
+    Location.prototype.replace = function (url) {
+      if (url && !isProxied(url)) url = toHttpProxy(url);
+      return origReplace.call(this, url);
+    };
+  } catch (e) {}
+
+  try {
+    var locProto = Object.getPrototypeOf(location);
+    var hrefDesc = Object.getOwnPropertyDescriptor(locProto, "href");
+    if (hrefDesc && hrefDesc.set) {
+      Object.defineProperty(locProto, "href", {
+        set: function (url) {
+          if (url && !isProxied(url)) url = toHttpProxy(url);
+          hrefDesc.set.call(this, url);
+        },
+        get: hrefDesc.get,
+        configurable: true,
+      });
+    }
+  } catch (e) {}
+
+  try {
+    var origPushState = history.pushState;
+    history.pushState = function (state, title, url) {
+      if (url && !isProxied(url)) url = toHttpProxy(url);
+      return origPushState.call(this, state, title, url);
+    };
+    var origReplaceState = history.replaceState;
+    history.replaceState = function (state, title, url) {
+      if (url && !isProxied(url)) url = toHttpProxy(url);
+      return origReplaceState.call(this, state, title, url);
+    };
+  } catch (e) {}
+
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || form.tagName !== "FORM") return;
+    if (form.dataset.ps === "1") return;
+
+    var action = form.getAttribute("action") || "";
+    var method = (form.getAttribute("method") || "GET").toUpperCase();
+
+    var targetUrl;
+    try {
+      if (action.indexOf("/proxy?url=") === 0) {
+        var raw = action.substring("/proxy?url=".length).split("&")[0];
+        targetUrl = new URL(decodeURIComponent(raw));
+      } else if (action === "" || action === null) {
+        targetUrl = new URL(REAL_BASE);
+      } else {
+        targetUrl = new URL(action, REAL_BASE);
+      }
+    } catch (err) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (method === "GET") {
+      var formData = new FormData(form);
+      for (var entry of formData.entries()) {
+        targetUrl.searchParams.append(entry[0], entry[1]);
+      }
+      location.href = "/proxy?url=" + encodeURIComponent(targetUrl.toString());
+    } else {
+      form.setAttribute("action", "/proxy?url=" + encodeURIComponent(targetUrl.toString()));
+      form.dataset.ps = "1";
+      form.submit();
+    }
+  }, true);
+
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    var link = e.target.closest ? e.target.closest("a") : null;
+    if (!link) return;
+    var href = link.getAttribute("href");
+    if (!href || href === "#" || href.startsWith("javascript:") ||
+        href.startsWith("data:") || isProxied(href)) return;
+    if (link.target === "_blank") return;
+    e.preventDefault();
+    location.href = toHttpProxy(href);
+  }, true);
+})();
+<\/script>`;
 }
 
 const ATTR_TAGS: Record<string, string> = {
@@ -30,66 +200,14 @@ const ATTR_TAGS: Record<string, string> = {
   img: "src",
   source: "src",
   iframe: "src",
-  form: "action",
   video: "src",
   audio: "src",
   embed: "src",
+  track: "src",
+  object: "data",
 };
 
-/**
- * Injected at the top of <head> on every proxied HTML page. Patches
- * fetch/XHR/WebSocket so JS the page runs on its own also tunnels
- * through /proxy, instead of only the URLs present in the initial HTML.
- */
-function buildShim(baseUrl: string): string {
-  return `<script>
-(function () {
-  var REAL_BASE = ${JSON.stringify(baseUrl)};
-  function toHttpProxy(u) {
-    try {
-      var abs = new URL(u, REAL_BASE).toString();
-      return "/proxy?url=" + encodeURIComponent(abs);
-    } catch (e) { return u; }
-  }
-  function toWsProxy(u) {
-    try {
-      var abs = new URL(u, REAL_BASE.replace(/^http/, "ws")).toString();
-      var wsScheme = location.protocol === "https:" ? "wss:" : "ws:";
-      return wsScheme + "//" + location.host + "/proxy?url=" + encodeURIComponent(abs);
-    } catch (e) { return u; }
-  }
-
-  var origFetch = window.fetch;
-  window.fetch = function (input, init) {
-    var url = typeof input === "string" ? input : input && input.url;
-    if (url && !/^\\/proxy\\?url=/.test(url)) {
-      var proxied = toHttpProxy(url);
-      input = typeof input === "string" ? proxied : new Request(proxied, input);
-    }
-    return origFetch.call(this, input, init);
-  };
-
-  var origOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url) {
-    var args = Array.prototype.slice.call(arguments);
-    if (url && !/^\\/proxy\\?url=/.test(url)) args[1] = toHttpProxy(url);
-    return origOpen.apply(this, args);
-  };
-
-  var OrigWebSocket = window.WebSocket;
-  window.WebSocket = function (url, protocols) {
-    return new OrigWebSocket(toWsProxy(url), protocols);
-  };
-  window.WebSocket.prototype = OrigWebSocket.prototype;
-  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
-  window.WebSocket.OPEN = OrigWebSocket.OPEN;
-  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
-  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
-})();
-</script>`;
-}
-
-class AttrRewriter {
+class AttrRewriter implements HTMLRewriterElementContentHandlers {
   constructor(private attr: string, private baseUrl: string) {}
   element(el: Element) {
     const val = el.getAttribute(this.attr);
@@ -97,7 +215,7 @@ class AttrRewriter {
   }
 }
 
-class SrcsetRewriter {
+class SrcsetRewriter implements HTMLRewriterElementContentHandlers {
   constructor(private baseUrl: string) {}
   element(el: Element) {
     const val = el.getAttribute("srcset");
@@ -114,7 +232,7 @@ class SrcsetRewriter {
   }
 }
 
-class StyleAttrRewriter {
+class StyleAttrRewriter implements HTMLRewriterElementContentHandlers {
   constructor(private baseUrl: string) {}
   element(el: Element) {
     const val = el.getAttribute("style");
@@ -122,12 +240,10 @@ class StyleAttrRewriter {
   }
 }
 
-/** Inline <style>...</style> text can arrive across several chunks; buffer
- * until the last chunk of the text node, then rewrite the whole thing. */
-class InlineStyleTextRewriter {
+class InlineStyleTextRewriter implements HTMLRewriterElementContentHandlers {
   private buffer = "";
   constructor(private baseUrl: string) {}
-  text(chunk: Text) {
+  text(chunk: TextChunk) {
     this.buffer += chunk.text;
     if (chunk.lastInTextNode) {
       chunk.replace(rewriteCssText(this.buffer, this.baseUrl), { html: false });
@@ -138,21 +254,25 @@ class InlineStyleTextRewriter {
   }
 }
 
-class HeadShimInjector {
+class HeadShimInjector implements HTMLRewriterElementContentHandlers {
   constructor(private baseUrl: string) {}
   element(el: Element) {
     el.prepend(buildShim(this.baseUrl), { html: true });
   }
 }
 
-/** Removes <meta> tags that would block or redirect the framed page
- * outside of the proxy tunnel (CSP meta tags, meta-refresh). */
-class BlockingMetaStripper {
+class BlockingMetaStripper implements HTMLRewriterElementContentHandlers {
   element(el: Element) {
     const httpEquiv = (el.getAttribute("http-equiv") || "").toLowerCase();
     if (httpEquiv === "content-security-policy" || httpEquiv === "refresh") {
       el.remove();
     }
+  }
+}
+
+class BaseStripper implements HTMLRewriterElementContentHandlers {
+  element(el: Element) {
+    el.remove();
   }
 }
 
@@ -166,5 +286,6 @@ export function rewriteHtmlResponse(response: Response, baseUrl: string): Respon
   rewriter.on("style", new InlineStyleTextRewriter(baseUrl));
   rewriter.on("head", new HeadShimInjector(baseUrl));
   rewriter.on("meta", new BlockingMetaStripper());
+  rewriter.on("base", new BaseStripper());
   return rewriter.transform(response);
 }
