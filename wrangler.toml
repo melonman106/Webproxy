@@ -14,3 +14,7 @@ class_name = "CookieJar"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CookieJar"]
+
+[[kv_namespaces]]
+binding = "USER_DATA"
+id = "fbe05d6ecd5b47668ea0b8ca95399fed"

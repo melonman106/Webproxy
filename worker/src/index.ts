@@ -5,6 +5,12 @@ import { CookieJar } from "./cookieJar";
 
 export { CookieJar };
 
+export interface Env {
+  ASSETS: Fetcher;
+  COOKIE_JAR: DurableObjectNamespace<CookieJar>;
+  USER_DATA: KVNamespace;
+}
+
 const SESSION_COOKIE = "__psid";
 const SESSION_ID_RE = /[0-9a-f-]{36}/i;
 
@@ -126,7 +132,18 @@ async function handleHttpProxy(
   };
 
   if (!["GET", "HEAD"].includes(request.method)) {
-    init.body = await request.arrayBuffer();
+    const reqContentType = (request.headers.get("content-type") || "").toLowerCase();
+    const isTextBody =
+      reqContentType.includes("application/x-www-form-urlencoded") ||
+      reqContentType.includes("application/json") ||
+      reqContentType.startsWith("text/");
+    // multipart/form-data (file uploads) is left as raw bytes untouched —
+    // rewriting text inside a binary-safe multipart body isn't attempted.
+    if (isTextBody) {
+      init.body = unproxyText(await request.text());
+    } else {
+      init.body = await request.arrayBuffer();
+    }
   }
 
   let upstream = await fetch(targetUrl.toString(), init);
@@ -207,11 +224,150 @@ async function handleHttpProxy(
 
 const JS_URL_RE = /(["'`])(https?:\/\/[^"'`\s)]+)\1/g;
 
+// Best-effort, regex-based (not a real JS parser) rewrite of import/export
+// specifiers and dynamic import() calls, including *relative* ones. This
+// matters because a script served from /proxy?url=<encoded-real-url>
+// resolves relative specifiers against that proxy URL, not the real
+// site's URL — so "./chunk.js" would otherwise 404. Heuristic limits:
+// it won't catch computed/templated specifiers (e.g. import(`${base}/x.js`))
+// or heavily obfuscated/minified edge cases that don't match this shape.
+const IMPORT_EXPORT_RE =
+  /\b(import\s*\(\s*|import\s+(?:[\w${}*,\s]+from\s+)?|export\s+(?:[\w${}*,\s]+from\s+)?)(["'])([^"'\n]+)\2/g;
+
+const SOURCE_MAP_RE = /(\/\/[#@]\s*sourceMappingURL=)([^\s]+)/;
+
 function rewriteJsUrls(js: string, baseUrl: string): string {
-  return js.replace(JS_URL_RE, (match, quote: string, url: string) => {
+  let out = js.replace(IMPORT_EXPORT_RE, (match, prefix: string, quote: string, spec: string) => {
+    if (spec.startsWith("data:") || spec.includes("/proxy?url=")) return match;
+    try {
+      const absolute = new URL(spec, baseUrl).toString();
+      return `${prefix}${quote}/proxy?url=${encodeURIComponent(absolute)}${quote}`;
+    } catch {
+      return match;
+    }
+  });
+
+  out = out.replace(JS_URL_RE, (match, quote: string, url: string) => {
     if (url.includes("/proxy?url=")) return match;
     return `${quote}/proxy?url=${encodeURIComponent(url)}${quote}`;
   });
+
+  out = out.replace(SOURCE_MAP_RE, (match, prefix: string, mapUrl: string) => {
+    if (mapUrl.startsWith("data:") || mapUrl.includes("/proxy?url=")) return match;
+    try {
+      const absolute = new URL(mapUrl, baseUrl).toString();
+      return `${prefix}/proxy?url=${encodeURIComponent(absolute)}`;
+    } catch {
+      return match;
+    }
+  });
+
+  return out;
+}
+
+/** Reverses /proxy?url=<real> occurrences back to the plain real URL.
+ * Used on outgoing POST bodies: if a page's own JS put a proxied URL
+ * into a form field or JSON payload (e.g. because our location-rewriting
+ * shim touched it upstream), the real origin server needs the real URL
+ * back, not our proxy's internal address scheme. */
+const PROXIED_URL_IN_TEXT_RE = /\/proxy\?url=([^"'&\s]+)/g;
+
+function unproxyText(text: string): string {
+  return text.replace(PROXIED_URL_IN_TEXT_RE, (match, encoded: string) => {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return match;
+    }
+  });
+}
+
+interface StoredEntry {
+  url: string;
+  title: string;
+  savedAt: number;
+}
+
+const MAX_HISTORY_ENTRIES = 200;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}
+
+async function readList(env: Env, key: string): Promise<StoredEntry[]> {
+  const raw = await env.USER_DATA.get(key);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function handleBookmarks(request: Request, env: Env, sessionId: string): Promise<Response> {
+  const key = `bookmarks:${sessionId}`;
+
+  if (request.method === "GET") {
+    return jsonResponse(await readList(env, key));
+  }
+
+  if (request.method === "POST") {
+    let body: { url?: string; title?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return new Response("Invalid JSON body", { status: 400 });
+    }
+    if (!body.url) return new Response("Missing url", { status: 400 });
+
+    const list = await readList(env, key);
+    const withoutDupe = list.filter((entry) => entry.url !== body.url);
+    withoutDupe.unshift({ url: body.url, title: body.title || body.url, savedAt: Date.now() });
+    await env.USER_DATA.put(key, JSON.stringify(withoutDupe));
+    return jsonResponse(withoutDupe);
+  }
+
+  if (request.method === "DELETE") {
+    const target = new URL(request.url).searchParams.get("url");
+    const list = await readList(env, key);
+    const filtered = list.filter((entry) => entry.url !== target);
+    await env.USER_DATA.put(key, JSON.stringify(filtered));
+    return jsonResponse(filtered);
+  }
+
+  return new Response("Method not allowed", { status: 405 });
+}
+
+async function handleHistory(request: Request, env: Env, sessionId: string): Promise<Response> {
+  const key = `history:${sessionId}`;
+
+  if (request.method === "GET") {
+    return jsonResponse(await readList(env, key));
+  }
+
+  if (request.method === "POST") {
+    let body: { url?: string; title?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return new Response("Invalid JSON body", { status: 400 });
+    }
+    if (!body.url) return new Response("Missing url", { status: 400 });
+
+    const list = await readList(env, key);
+    const withoutDupe = list.filter((entry) => entry.url !== body.url);
+    withoutDupe.unshift({ url: body.url, title: body.title || body.url, savedAt: Date.now() });
+    await env.USER_DATA.put(key, JSON.stringify(withoutDupe.slice(0, MAX_HISTORY_ENTRIES)));
+    return jsonResponse(withoutDupe.slice(0, MAX_HISTORY_ENTRIES));
+  }
+
+  if (request.method === "DELETE") {
+    await env.USER_DATA.delete(key);
+    return jsonResponse([]);
+  }
+
+  return new Response("Method not allowed", { status: 405 });
 }
 
 export default {
@@ -251,6 +407,30 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/api/bookmarks") {
+      const { id: sessionId, isNew } = readSessionId(request);
+      const resp = await handleBookmarks(request, env, sessionId);
+      if (isNew) {
+        resp.headers.append(
+          "Set-Cookie",
+          `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+        );
+      }
+      return resp;
+    }
+
+    if (url.pathname === "/api/history") {
+      const { id: sessionId, isNew } = readSessionId(request);
+      const resp = await handleHistory(request, env, sessionId);
+      if (isNew) {
+        resp.headers.append(
+          "Set-Cookie",
+          `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+        );
+      }
+      return resp;
     }
 
     if (url.pathname === "/clear-session") {

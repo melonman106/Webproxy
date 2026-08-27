@@ -90,6 +90,95 @@ export function buildShim(baseUrl: string): string {
   PatchedWebSocket.CLOSED = OrigWebSocket.CLOSED;
   window.WebSocket = PatchedWebSocket;
 
+  // Service workers: rewrite the script URL through the proxy so the SW
+  // itself is fetched via /proxy (its own fetch() calls are covered by
+  // the JS-text rewriting pass on the server, not this page-level shim,
+  // since a service worker runs in a separate global scope).
+  try {
+    if (window.navigator && navigator.serviceWorker && navigator.serviceWorker.register) {
+      var origSwRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+      navigator.serviceWorker.register = function (scriptUrl, options) {
+        var proxiedScript = toHttpProxy(scriptUrl);
+        var opts = options ? Object.assign({}, options) : undefined;
+        // A SW's effective scope can't exceed its own directory, and our
+        // script now lives at /proxy?url=..., so an unset/real-site scope
+        // would fail to register. Defaulting to root keeps it working;
+        // this does mean scope-based routing on the original site is lost.
+        if (opts && opts.scope) opts.scope = "/";
+        return origSwRegister(proxiedScript, opts);
+      };
+    }
+  } catch (e) {}
+
+  // Web Workers / SharedWorkers: rewrite the script URL the same way as
+  // WebSocket above. Same caveat as service workers: the worker's own
+  // fetch/import calls inside its script are handled by the server-side
+  // JS rewriting pass, not by this shim.
+  try {
+    var OrigWorker = window.Worker;
+    if (OrigWorker) {
+      window.Worker = function (scriptUrl, options) {
+        return new OrigWorker(toHttpProxy(scriptUrl), options);
+      };
+      window.Worker.prototype = OrigWorker.prototype;
+    }
+  } catch (e) {}
+  try {
+    var OrigSharedWorker = window.SharedWorker;
+    if (OrigSharedWorker) {
+      window.SharedWorker = function (scriptUrl, options) {
+        return new OrigSharedWorker(toHttpProxy(scriptUrl), options);
+      };
+      window.SharedWorker.prototype = OrigSharedWorker.prototype;
+    }
+  } catch (e) {}
+
+  // Report title/URL changes up to the parent chrome so the Safari-style
+  // tab bar and address bar can reflect the real page without needing
+  // cross-origin postMessage cooperation from the site itself.
+  try {
+    function currentRealUrl() {
+      try {
+        var href = location.href;
+        var marker = "/proxy?url=";
+        var idx = href.indexOf(marker);
+        if (idx !== -1) {
+          return decodeURIComponent(href.slice(idx + marker.length).split("&")[0]);
+        }
+      } catch (e) {}
+      return REAL_BASE;
+    }
+    function reportState() {
+      try {
+        parent.postMessage(
+          { __tunnel: true, title: document.title, realUrl: currentRealUrl() },
+          "*"
+        );
+      } catch (e) {}
+    }
+    document.addEventListener("DOMContentLoaded", reportState);
+    window.addEventListener("load", reportState);
+    window.addEventListener("popstate", reportState);
+    var titleEl = document.querySelector("title");
+    if (titleEl && window.MutationObserver) {
+      new MutationObserver(reportState).observe(titleEl, { childList: true });
+    } else if (window.MutationObserver && document.head) {
+      new MutationObserver(reportState).observe(document.head, { childList: true, subtree: true });
+    }
+    // Catch SPA pushState/replaceState navigations too (already patched
+    // above to rewrite the URL argument) by re-reporting right after.
+    var wrapHistoryMethod = function (name) {
+      var orig = history[name];
+      history[name] = function () {
+        var ret = orig.apply(this, arguments);
+        reportState();
+        return ret;
+      };
+    };
+    wrapHistoryMethod("pushState");
+    wrapHistoryMethod("replaceState");
+  } catch (e) {}
+
   var origWindowOpen = window.open;
   window.open = function (url, target, features) {
     try {
@@ -243,7 +332,7 @@ class StyleAttrRewriter implements HTMLRewriterElementContentHandlers {
 class InlineStyleTextRewriter implements HTMLRewriterElementContentHandlers {
   private buffer = "";
   constructor(private baseUrl: string) {}
-  text(chunk: TextChunk) {
+  text(chunk: Text) {
     this.buffer += chunk.text;
     if (chunk.lastInTextNode) {
       chunk.replace(rewriteCssText(this.buffer, this.baseUrl), { html: false });
