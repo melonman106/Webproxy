@@ -149,3 +149,5 @@ USER_DATA`) and swap in the resulting `id`.
   instead of regex for cases where the heuristic import rewriting falls
   short — meaningfully more engineering than this project currently
   invests, but the honest ceiling on how far pure text rewriting gets you.
+
+PLS CREDIT ME:)
