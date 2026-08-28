@@ -1,15 +1,9 @@
 // worker/src/index.ts
 
-import { rewriteHtmlResponse, rewriteCssText } from "./rewriter";
+import { rewriteHtmlResponse, rewriteCssText, toProxyUrl } from "./rewriter";
 import { CookieJar } from "./cookieJar";
 
 export { CookieJar };
-
-export interface Env {
-  ASSETS: Fetcher;
-  COOKIE_JAR: DurableObjectNamespace<CookieJar>;
-  USER_DATA: KVNamespace;
-}
 
 const SESSION_COOKIE = "__psid";
 const SESSION_ID_RE = /[0-9a-f-]{36}/i;
@@ -34,7 +28,24 @@ const FORWARD_REQUEST_HEADERS = new Set([
   "range",
   "origin",
   "referer",
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "sec-fetch-user",
+  "sec-ch-ua",
+  "sec-ch-ua-mobile",
+  "sec-ch-ua-platform",
+  "priority",
 ]);
+
+// Default browser fingerprint headers
+const DEFAULT_SEC_FETCH_DEST = "document";
+const DEFAULT_SEC_FETCH_MODE = "navigate";
+const DEFAULT_SEC_FETCH_SITE = "none";
+const DEFAULT_SEC_FETCH_USER = "?1";
+const DEFAULT_SEC_CH_UA = '"Chromium";v="120", "Not_A Brand";v="8", "Google Chrome";v="120"';
+const DEFAULT_SEC_CH_UA_MOBILE = "?0";
+const DEFAULT_SEC_CH_UA_PLATFORM = '"Windows"';
 
 function readSessionId(request: Request): { id: string; isNew: boolean } {
   const cookieHeader = request.headers.get("Cookie") || "";
@@ -46,6 +57,493 @@ function readSessionId(request: Request): { id: string; isNew: boolean } {
   }
   return { id: crypto.randomUUID(), isNew: true };
 }
+
+/* ------------------------------------------------------------------ */
+/* Dashboard HTML — dark mode + liquid glass                           */
+/* ------------------------------------------------------------------ */
+
+function getDashboardHTML(): string {
+  const quickLinks = [
+    { name: "YouTube", url: "https://www.youtube.com", icon: "📺" },
+    { name: "Discord", url: "https://discord.com/app", icon: "💬" },
+    { name: "Reddit", url: "https://www.reddit.com", icon: "👽" },
+    { name: "Twitch", url: "https://www.twitch.tv", icon: "🎮" },
+    { name: "Spotify", url: "https://open.spotify.com", icon: "🎵" },
+    { name: "GitHub", url: "https://github.com", icon: "🐙" },
+    { name: "Wikipedia", url: "https://www.wikipedia.org", icon: "📚" },
+    { name: "Twitter/X", url: "https://x.com", icon: "🐦" },
+  ];
+
+  const quickLinksHTML = quickLinks
+    .map(
+      (link) =>
+        `<a href="/proxy?url=${encodeURIComponent(link.url)}" class="quick-link">
+          <span class="icon">${link.icon}</span>
+          <span class="name">${link.name}</span>
+        </a>`
+    )
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebProxy</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-start: #0a0a1a;
+    --bg-end: #1a0a2e;
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-hover: rgba(255, 255, 255, 0.08);
+    --text: #e8e8f0;
+    --text-muted: #8888aa;
+    --accent: #7c3aed;
+    --accent-glow: rgba(124, 58, 237, 0.4);
+    --accent-hover: #6d28d9;
+    --danger: #ef4444;
+    --blur: 20px;
+  }
+
+  body {
+    background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  body::before, body::after {
+    content: '';
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(80px);
+    z-index: -1;
+    animation: float 20s ease-in-out infinite;
+  }
+  body::before {
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(124, 58, 237, 0.15), transparent);
+    top: -100px; left: -100px;
+  }
+  body::after {
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(236, 72, 153, 0.1), transparent);
+    bottom: -150px; right: -150px;
+    animation-delay: -10s;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(50px, -30px) scale(1.1); }
+    66% { transform: translate(-30px, 50px) scale(0.9); }
+  }
+
+  .container { max-width: 800px; width: 100%; }
+
+  header { text-align: center; margin: 50px 0 30px; }
+  header h1 {
+    font-size: 2.8rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #7c3aed, #ec4899, #06b6d4);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -1px;
+  }
+  header p {
+    color: var(--text-muted);
+    margin-top: 10px;
+    font-size: 1rem;
+  }
+
+  .search-bar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 30px;
+  }
+  .search-bar input {
+    flex: 1;
+    padding: 16px 20px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    color: var(--text);
+    font-size: 1.1rem;
+    outline: none;
+    transition: all 0.3s ease;
+  }
+  .search-bar input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  .search-bar input::placeholder { color: var(--text-muted); }
+  .search-bar button {
+    padding: 16px 28px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    color: var(--text);
+    border-radius: 14px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  .search-bar button:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+
+  .quick-links {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 30px;
+  }
+  .quick-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 10px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    text-decoration: none;
+    color: var(--text);
+    transition: all 0.3s ease;
+  }
+  .quick-link:hover {
+    background: var(--glass-hover);
+    border-color: var(--accent);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 30px var(--accent-glow);
+  }
+  .quick-link .icon { font-size: 2rem; margin-bottom: 8px; }
+  .quick-link .name { font-size: 0.85rem; font-weight: 500; }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    padding: 4px;
+  }
+  .tab {
+    flex: 1;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    cursor: pointer;
+    border-radius: 10px;
+    transition: all 0.3s ease;
+  }
+  .tab.active {
+    color: var(--text);
+    background: var(--glass-hover);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .history-list { list-style: none; }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    margin-bottom: 8px;
+    text-decoration: none;
+    color: var(--text);
+    transition: all 0.3s ease;
+  }
+  .history-item:hover {
+    background: var(--glass-hover);
+    border-color: var(--accent);
+  }
+  .history-item .favicon { font-size: 1.2rem; }
+  .history-item .title { font-weight: 500; }
+  .history-item .url { color: var(--text-muted); font-size: 0.8rem; margin-left: auto; }
+  .history-item .delete {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    font-size: 1.2rem; padding: 0 4px; opacity: 0.5; transition: all 0.2s;
+  }
+  .history-item .delete:hover { opacity: 1; color: var(--danger); }
+  .empty-state { text-align: center; color: var(--text-muted); padding: 40px; }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    margin-bottom: 8px;
+  }
+  .setting-row label { font-weight: 500; }
+  .setting-row .desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
+
+  .toggle {
+    position: relative;
+    width: 48px; height: 26px;
+    background: var(--glass-border);
+    border-radius: 13px;
+    cursor: pointer;
+    transition: background 0.3s;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 20px; height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    top: 3px; left: 3px;
+    transition: left 0.3s;
+  }
+  .toggle.on::after { left: 25px; }
+
+  .shortcuts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .shortcut {
+    padding: 12px 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    font-size: 0.85rem;
+  }
+  .shortcut kbd {
+    background: rgba(255,255,255,0.1);
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    border: 1px solid var(--glass-border);
+  }
+
+  .btn-danger {
+    padding: 8px 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--glass-border);
+    color: var(--text);
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+  }
+  .btn-danger:hover {
+    background: var(--danger);
+    border-color: var(--danger);
+  }
+
+  footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  @media (max-width: 600px) {
+    header h1 { font-size: 2rem; }
+    .quick-links { grid-template-columns: repeat(3, 1fr); }
+    .shortcuts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>WebProxy</h1>
+    <p>Browse the web freely — ad-blocked, encrypted, and fast</p>
+  </header>
+
+  <div class="search-bar">
+    <input type="text" id="urlInput" placeholder="Enter URL or search..." autofocus>
+    <button onclick="navigate()">Go</button>
+  </div>
+
+  <div class="quick-links">
+    ${quickLinksHTML}
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('history', this)">📜 History</button>
+    <button class="tab" onclick="switchTab('shortcuts', this)">⌨️ Shortcuts</button>
+    <button class="tab" onclick="switchTab('settings', this)">⚙️ Settings</button>
+  </div>
+
+  <div class="tab-content active" id="tab-history">
+    <ul class="history-list" id="historyList">
+      <div class="empty-state">No history yet. Start browsing!</div>
+    </ul>
+  </div>
+
+  <div class="tab-content" id="tab-shortcuts">
+    <div class="shortcuts">
+      <div class="shortcut"><kbd>Alt</kbd> + <kbd>S</kbd> — Focus search bar</div>
+      <div class="shortcut"><kbd>Alt</kbd> + <kbd>H</kbd> — Go to history tab</div>
+      <div class="shortcut"><kbd>Alt</kbd> + <kbd>Enter</kbd> — Open in new tab</div>
+      <div class="shortcut"><kbd>Esc</kbd> — Clear search bar</div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-settings">
+    <div class="setting-row">
+      <div>
+        <label>Clear History</label>
+        <div class="desc">Remove all browsing history</div>
+      </div>
+      <button class="btn-danger" onclick="clearHistory()">Clear</button>
+    </div>
+    <div class="setting-row">
+      <div>
+        <label>Clear Session</label>
+        <div class="desc">Clear cookies and session data</div>
+      </div>
+      <button class="btn-danger" onclick="clearSession()">Clear</button>
+    </div>
+  </div>
+
+  <footer>
+    WebProxy • Powered by Cloudflare Workers
+  </footer>
+</div>
+
+<script>
+function navigate(newTab) {
+  var input = document.getElementById('urlInput');
+  var url = input.value.trim();
+  if (!url) return;
+  if (!/^https?:\\/\\//i.test(url)) {
+    if (/^[\\w-]+\\.[\\w.-]+/.test(url)) url = 'https://' + url;
+    else url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+  }
+  var proxyURL = '/proxy?url=' + encodeURIComponent(url);
+  if (newTab) window.open(proxyURL, '_blank');
+  else window.location.href = proxyURL;
+}
+
+document.getElementById('urlInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    if (e.altKey) navigate(true);
+    else navigate(false);
+  }
+  if (e.key === 'Escape') e.target.value = '';
+});
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+function loadHistory() {
+  var history = JSON.parse(localStorage.getItem('proxyHistory') || '[]');
+  var list = document.getElementById('historyList');
+  if (history.length === 0) {
+    list.innerHTML = '<div class="empty-state">No history yet. Start browsing!</div>';
+    return;
+  }
+  list.innerHTML = history.map(function(item, i) {
+    return '<a class="history-item" href="/proxy?url=' + encodeURIComponent(item.url) + '">' +
+      '<span class="favicon">🌐</span>' +
+      '<span class="title">' + escapeHtml(item.title || item.url) + '</span>' +
+      '<span class="url">' + escapeHtml(item.url) + '</span>' +
+      '<button class="delete" onclick="event.preventDefault(); event.stopPropagation(); deleteHistory(' + i + ')">×</button>' +
+    '</a>';
+  }).join('');
+}
+
+function deleteHistory(i) {
+  var history = JSON.parse(localStorage.getItem('proxyHistory') || '[]');
+  history.splice(i, 1);
+  localStorage.setItem('proxyHistory', JSON.stringify(history));
+  loadHistory();
+}
+
+function clearHistory() {
+  localStorage.removeItem('proxyHistory');
+  loadHistory();
+}
+
+function clearSession() {
+  fetch('/clear-session').then(function() {
+    alert('Session cleared!');
+  });
+}
+
+function escapeHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.altKey && e.key === 's') { e.preventDefault(); document.getElementById('urlInput').focus(); }
+  if (e.altKey && e.key === 'h') { e.preventDefault(); switchTab('history', document.querySelector('.tab')); }
+});
+
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.__tunnel) {
+    var history = JSON.parse(localStorage.getItem('proxyHistory') || '[]');
+    var existing = history.findIndex(function(h) { return h.url === e.data.realUrl; });
+    if (existing !== -1) history.splice(existing, 1);
+    history.unshift({ url: e.data.realUrl, title: e.data.title, ts: Date.now() });
+    if (history.length > 50) history.pop();
+    localStorage.setItem('proxyHistory', JSON.stringify(history));
+    loadHistory();
+  }
+});
+
+loadHistory();
+</script>
+</body>
+</html>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* WebSocket proxy                                                     */
+/* ------------------------------------------------------------------ */
 
 async function handleWebSocketProxy(targetUrl: URL, request: Request): Promise<Response> {
   const upstreamHttpUrl = new URL(targetUrl.toString());
@@ -88,6 +586,10 @@ async function handleWebSocketProxy(targetUrl: URL, request: Request): Promise<R
   return new Response(null, { status: 101, webSocket: client });
 }
 
+/* ------------------------------------------------------------------ */
+/* HTTP proxy                                                           */
+/* ------------------------------------------------------------------ */
+
 async function handleHttpProxy(
   targetUrl: URL,
   request: Request,
@@ -116,6 +618,28 @@ async function handleHttpProxy(
     }
   }
 
+  if (!forwardHeaders.has("sec-fetch-dest")) {
+    forwardHeaders.set("Sec-Fetch-Dest", DEFAULT_SEC_FETCH_DEST);
+  }
+  if (!forwardHeaders.has("sec-fetch-mode")) {
+    forwardHeaders.set("Sec-Fetch-Mode", DEFAULT_SEC_FETCH_MODE);
+  }
+  if (!forwardHeaders.has("sec-fetch-site")) {
+    forwardHeaders.set("Sec-Fetch-Site", DEFAULT_SEC_FETCH_SITE);
+  }
+  if (!forwardHeaders.has("sec-fetch-user")) {
+    forwardHeaders.set("Sec-Fetch-User", DEFAULT_SEC_FETCH_USER);
+  }
+  if (!forwardHeaders.has("sec-ch-ua")) {
+    forwardHeaders.set("Sec-Ch-Ua", DEFAULT_SEC_CH_UA);
+  }
+  if (!forwardHeaders.has("sec-ch-ua-mobile")) {
+    forwardHeaders.set("Sec-Ch-Ua-Mobile", DEFAULT_SEC_CH_UA_MOBILE);
+  }
+  if (!forwardHeaders.has("sec-ch-ua-platform")) {
+    forwardHeaders.set("Sec-Ch-Ua-Platform", DEFAULT_SEC_CH_UA_PLATFORM);
+  }
+
   forwardHeaders.set("Referer", targetUrl.toString());
   forwardHeaders.set("Origin", targetOrigin);
 
@@ -137,8 +661,6 @@ async function handleHttpProxy(
       reqContentType.includes("application/x-www-form-urlencoded") ||
       reqContentType.includes("application/json") ||
       reqContentType.startsWith("text/");
-    // multipart/form-data (file uploads) is left as raw bytes untouched —
-    // rewriting text inside a binary-safe multipart body isn't attempted.
     if (isTextBody) {
       init.body = unproxyText(await request.text());
     } else {
@@ -222,37 +744,31 @@ async function handleHttpProxy(
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
+/* ------------------------------------------------------------------ */
+/* JS URL rewriting                                                    */
+/* ------------------------------------------------------------------ */
+
 const JS_URL_RE = /(["'`])(https?:\/\/[^"'`\s)]+)\1/g;
-
-// Best-effort, regex-based (not a real JS parser) rewrite of import/export
-// specifiers and dynamic import() calls, including *relative* ones. This
-// matters because a script served from /proxy?url=<encoded-real-url>
-// resolves relative specifiers against that proxy URL, not the real
-// site's URL — so "./chunk.js" would otherwise 404. Heuristic limits:
-// it won't catch computed/templated specifiers (e.g. import(`${base}/x.js`))
-// or heavily obfuscated/minified edge cases that don't match this shape.
-const IMPORT_EXPORT_RE =
-  /\b(import\s*\(\s*|import\s+(?:[\w${}*,\s]+from\s+)?|export\s+(?:[\w${}*,\s]+from\s+)?)(["'])([^"'\n]+)\2/g;
-
+const IMPORT_EXPORT_RE = /\b(import\s*\(\s*|import\s+(?:[\w${}*,\s]+from\s+)?|export\s+(?:[\w${}*,\s]+from\s+)?)(["'])([^"'\n]+)\2/g;
 const SOURCE_MAP_RE = /(\/\/[#@]\s*sourceMappingURL=)([^\s]+)/;
 
 function rewriteJsUrls(js: string, baseUrl: string): string {
-  let out = js.replace(IMPORT_EXPORT_RE, (match, prefix: string, quote: string, spec: string) => {
+  let out = js.replace(IMPORT_EXPORT_RE, (match, prefix, quote, spec) => {
     if (spec.startsWith("data:") || spec.includes("/proxy?url=")) return match;
     try {
       const absolute = new URL(spec, baseUrl).toString();
+      if (absolute.includes("challenges.cloudflare.com")) return match;
       return `${prefix}${quote}/proxy?url=${encodeURIComponent(absolute)}${quote}`;
     } catch {
       return match;
     }
   });
-
-  out = out.replace(JS_URL_RE, (match, quote: string, url: string) => {
+  out = out.replace(JS_URL_RE, (match, quote, url) => {
     if (url.includes("/proxy?url=")) return match;
+    if (url.includes("challenges.cloudflare.com")) return match;
     return `${quote}/proxy?url=${encodeURIComponent(url)}${quote}`;
   });
-
-  out = out.replace(SOURCE_MAP_RE, (match, prefix: string, mapUrl: string) => {
+  out = out.replace(SOURCE_MAP_RE, (match, prefix, mapUrl) => {
     if (mapUrl.startsWith("data:") || mapUrl.includes("/proxy?url=")) return match;
     try {
       const absolute = new URL(mapUrl, baseUrl).toString();
@@ -261,19 +777,17 @@ function rewriteJsUrls(js: string, baseUrl: string): string {
       return match;
     }
   });
-
   return out;
 }
 
-/** Reverses /proxy?url=<real> occurrences back to the plain real URL.
- * Used on outgoing POST bodies: if a page's own JS put a proxied URL
- * into a form field or JSON payload (e.g. because our location-rewriting
- * shim touched it upstream), the real origin server needs the real URL
- * back, not our proxy's internal address scheme. */
-const PROXIED_URL_IN_TEXT_RE = /\/proxy\?url=([^"'&\s]+)/g;
+/* ------------------------------------------------------------------ */
+/* Unproxy text                                                        */
+/* ------------------------------------------------------------------ */
+
+const PROXIED_URL_IN_TEXT_RE = /\/proxy\?url=([^"&\s]+)/g;
 
 function unproxyText(text: string): string {
-  return text.replace(PROXIED_URL_IN_TEXT_RE, (match, encoded: string) => {
+  return text.replace(PROXIED_URL_IN_TEXT_RE, (match, encoded) => {
     try {
       return decodeURIComponent(encoded);
     } catch {
@@ -282,97 +796,19 @@ function unproxyText(text: string): string {
   });
 }
 
-interface StoredEntry {
-  url: string;
-  title: string;
-  savedAt: number;
-}
-
-const MAX_HISTORY_ENTRIES = 200;
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return Response.json(body, { status });
-}
-
-async function readList(env: Env, key: string): Promise<StoredEntry[]> {
-  const raw = await env.USER_DATA.get(key);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function handleBookmarks(request: Request, env: Env, sessionId: string): Promise<Response> {
-  const key = `bookmarks:${sessionId}`;
-
-  if (request.method === "GET") {
-    return jsonResponse(await readList(env, key));
-  }
-
-  if (request.method === "POST") {
-    let body: { url?: string; title?: string };
-    try {
-      body = await request.json();
-    } catch {
-      return new Response("Invalid JSON body", { status: 400 });
-    }
-    if (!body.url) return new Response("Missing url", { status: 400 });
-
-    const list = await readList(env, key);
-    const withoutDupe = list.filter((entry) => entry.url !== body.url);
-    withoutDupe.unshift({ url: body.url, title: body.title || body.url, savedAt: Date.now() });
-    await env.USER_DATA.put(key, JSON.stringify(withoutDupe));
-    return jsonResponse(withoutDupe);
-  }
-
-  if (request.method === "DELETE") {
-    const target = new URL(request.url).searchParams.get("url");
-    const list = await readList(env, key);
-    const filtered = list.filter((entry) => entry.url !== target);
-    await env.USER_DATA.put(key, JSON.stringify(filtered));
-    return jsonResponse(filtered);
-  }
-
-  return new Response("Method not allowed", { status: 405 });
-}
-
-async function handleHistory(request: Request, env: Env, sessionId: string): Promise<Response> {
-  const key = `history:${sessionId}`;
-
-  if (request.method === "GET") {
-    return jsonResponse(await readList(env, key));
-  }
-
-  if (request.method === "POST") {
-    let body: { url?: string; title?: string };
-    try {
-      body = await request.json();
-    } catch {
-      return new Response("Invalid JSON body", { status: 400 });
-    }
-    if (!body.url) return new Response("Missing url", { status: 400 });
-
-    const list = await readList(env, key);
-    const withoutDupe = list.filter((entry) => entry.url !== body.url);
-    withoutDupe.unshift({ url: body.url, title: body.title || body.url, savedAt: Date.now() });
-    await env.USER_DATA.put(key, JSON.stringify(withoutDupe.slice(0, MAX_HISTORY_ENTRIES)));
-    return jsonResponse(withoutDupe.slice(0, MAX_HISTORY_ENTRIES));
-  }
-
-  if (request.method === "DELETE") {
-    await env.USER_DATA.delete(key);
-    return jsonResponse([]);
-  }
-
-  return new Response("Method not allowed", { status: 405 });
-}
+/* ------------------------------------------------------------------ */
+/* Main entry                                                          */
+/* ------------------------------------------------------------------ */
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/" || url.pathname === "") {
+      return new Response(getDashboardHTML(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
 
     if (url.pathname === "/proxy") {
       const target = url.searchParams.get("url");
@@ -389,7 +825,9 @@ export default {
 
       if (request.headers.get("Upgrade") === "websocket") {
         if (!/^wss?:$/.test(targetUrl.protocol)) {
-          return new Response("Only ws(s) targets support WebSocket upgrade", { status: 400 });
+          return new Response("Only ws(s) targets support WebSocket upgrade", {
+            status: 400,
+          });
         }
         return handleWebSocketProxy(targetUrl, request);
       }
@@ -409,30 +847,6 @@ export default {
       return Response.json({ ok: true });
     }
 
-    if (url.pathname === "/api/bookmarks") {
-      const { id: sessionId, isNew } = readSessionId(request);
-      const resp = await handleBookmarks(request, env, sessionId);
-      if (isNew) {
-        resp.headers.append(
-          "Set-Cookie",
-          `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
-        );
-      }
-      return resp;
-    }
-
-    if (url.pathname === "/api/history") {
-      const { id: sessionId, isNew } = readSessionId(request);
-      const resp = await handleHistory(request, env, sessionId);
-      if (isNew) {
-        resp.headers.append(
-          "Set-Cookie",
-          `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
-        );
-      }
-      return resp;
-    }
-
     if (url.pathname === "/clear-session") {
       const { id: sessionId } = readSessionId(request);
       const jarId = env.COOKIE_JAR.idFromName(sessionId);
@@ -447,3 +861,8 @@ export default {
     return env.ASSETS.fetch(request);
   },
 };
+
+interface Env {
+  COOKIE_JAR: DurableObjectNamespace;
+  ASSETS: Fetcher;
+}
