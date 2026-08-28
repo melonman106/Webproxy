@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  RotateCw,
+  Bookmark,
+  Share,
+  Plus,
+  X,
+  Globe,
+  PanelLeft,
+  Lock,
+} from "lucide-react";
 
 interface Tab {
   id: string;
@@ -61,6 +73,7 @@ export default function App() {
   const [activeId, setActiveId] = useState(tabs[0].id);
   const [bookmarks, setBookmarks] = useState<HistoryEntry[]>([]);
   const [showBookmarks, setShowBookmarks] = useState(false);
+  const [addressFocused, setAddressFocused] = useState(false);
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({});
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? tabs[0];
@@ -173,11 +186,12 @@ export default function App() {
   }
 
   const isBookmarked = bookmarks.some((b) => b.url === activeTab.realUrl);
+  const isSecure = activeTab.realUrl.startsWith("https://");
 
   return (
     <div className="safari">
-      {/* Traffic lights + tab strip */}
-      <div className="safari__titlebar">
+      {/* Tab strip */}
+      <div className="safari__tabstrip">
         <div className="safari__traffic">
           <span className="dot dot--red" />
           <span className="dot dot--yellow" />
@@ -192,7 +206,7 @@ export default function App() {
               onClick={() => setActiveId(tab.id)}
             >
               <span className="safari__tab-favicon">
-                {tab.loading ? <span className="spinner" /> : <GlobeIcon />}
+                {tab.loading ? <span className="spinner" /> : <Globe size={13} strokeWidth={1.8} />}
               </span>
               <span className="safari__tab-title">{tab.title}</span>
               <button
@@ -203,67 +217,89 @@ export default function App() {
                 }}
                 aria-label="Close tab"
               >
-                ×
+                <X size={12} strokeWidth={2.2} />
               </button>
             </div>
           ))}
           <button className="safari__tab-new" onClick={() => openTab(null)} aria-label="New tab">
-            +
+            <Plus size={14} strokeWidth={2} />
           </button>
         </div>
       </div>
 
-      {/* Toolbar */}
+      {/* Unified toolbar */}
       <div className="safari__toolbar">
-        <div className="safari__nav-buttons">
-          <button onClick={goBack} aria-label="Back">
-            <ChevronIcon direction="left" />
-          </button>
-          <button onClick={goForward} aria-label="Forward">
-            <ChevronIcon direction="right" />
-          </button>
-        </div>
-
-        <form
-          className="safari__address"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (activeTab.addressInput.trim()) navigate(activeTab.id, activeTab.addressInput);
-          }}
+        <button
+          className="safari__icon-btn"
+          onClick={() => setShowBookmarks((v) => !v)}
+          aria-label="Toggle bookmarks sidebar"
         >
-          <button type="button" className="safari__reload" onClick={reload} aria-label="Reload">
-            <ReloadIcon />
-          </button>
-          <input
-            value={activeTab.addressInput}
-            onChange={(e) => updateTab(activeTab.id, { addressInput: e.target.value })}
-            placeholder="Search or enter website name"
-            spellCheck={false}
-          />
-          <button
-            type="button"
-            className={`safari__bookmark ${isBookmarked ? "safari__bookmark--active" : ""}`}
-            onClick={toggleBookmark}
-            aria-label="Bookmark this page"
-            disabled={!activeTab.realUrl}
-          >
-            <BookmarkIcon filled={isBookmarked} />
-          </button>
-        </form>
+          <PanelLeft size={16} strokeWidth={1.8} />
+        </button>
 
-        <div className="safari__shortcuts">
-          {SHORTCUTS.map((s) => (
-            <button key={s.label} onClick={() => navigate(activeTab.id, s.url)}>
-              {s.label}
-            </button>
-          ))}
-          <button
-            className={`safari__bookmarks-toggle ${showBookmarks ? "safari__bookmarks-toggle--active" : ""}`}
-            onClick={() => setShowBookmarks((v) => !v)}
-          >
-            Bookmarks
+        <div className="safari__nav-buttons">
+          <button className="safari__icon-btn" onClick={goBack} aria-label="Back">
+            <ChevronLeft size={17} strokeWidth={2.2} />
+          </button>
+          <button className="safari__icon-btn" onClick={goForward} aria-label="Forward">
+            <ChevronRight size={17} strokeWidth={2.2} />
           </button>
         </div>
+
+        <div className="safari__address-wrap">
+          <form
+            className="safari__address"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (activeTab.addressInput.trim()) navigate(activeTab.id, activeTab.addressInput);
+              (document.activeElement as HTMLElement)?.blur();
+            }}
+          >
+            {activeTab.realUrl && !addressFocused && (
+              <span className="safari__address-lock">
+                {isSecure ? <Lock size={11} strokeWidth={2} /> : null}
+              </span>
+            )}
+            <input
+              value={
+                addressFocused ? activeTab.addressInput : activeTab.realUrl ? hostnameOf(activeTab.realUrl) : ""
+              }
+              onFocus={(e) => {
+                setAddressFocused(true);
+                requestAnimationFrame(() => e.target.select());
+              }}
+              onBlur={() => setAddressFocused(false)}
+              onChange={(e) => updateTab(activeTab.id, { addressInput: e.target.value })}
+              placeholder="Search or enter website name"
+              spellCheck={false}
+            />
+            <button type="button" className="safari__icon-btn safari__icon-btn--inline" onClick={reload} aria-label="Reload">
+              <RotateCw size={13} strokeWidth={2} />
+            </button>
+          </form>
+        </div>
+
+        <button
+          type="button"
+          className={`safari__icon-btn ${isBookmarked ? "safari__icon-btn--active" : ""}`}
+          onClick={toggleBookmark}
+          aria-label="Bookmark this page"
+          disabled={!activeTab.realUrl}
+        >
+          <Bookmark size={16} strokeWidth={1.8} fill={isBookmarked ? "currentColor" : "none"} />
+        </button>
+
+        <button
+          className="safari__icon-btn"
+          onClick={() => activeTab.realUrl && navigator.share?.({ url: activeTab.realUrl, title: activeTab.title })}
+          aria-label="Share"
+        >
+          <Share size={16} strokeWidth={1.8} />
+        </button>
+
+        <button className="safari__icon-btn" onClick={() => openTab(null)} aria-label="New tab">
+          <Plus size={16} strokeWidth={1.8} />
+        </button>
       </div>
 
       {showBookmarks && (
@@ -271,7 +307,7 @@ export default function App() {
           {bookmarks.length === 0 && <span className="safari__hint">No bookmarks yet</span>}
           {bookmarks.map((b) => (
             <button key={b.url} onClick={() => navigate(activeTab.id, b.url)} title={b.url}>
-              <GlobeIcon /> {b.title || hostnameOf(b.url)}
+              <Globe size={12} strokeWidth={1.8} /> {b.title || hostnameOf(b.url)}
             </button>
           ))}
         </div>
@@ -291,7 +327,7 @@ export default function App() {
               title={tab.title}
               className={tab.id === activeId ? "safari__frame safari__frame--active" : "safari__frame"}
               onLoad={() => updateTab(tab.id, { loading: false })}
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-popups-to-escape-sandbox"
             />
           ) : (
             tab.id === activeId && (
@@ -300,7 +336,7 @@ export default function App() {
                 <div className="safari__start-shortcuts">
                   {SHORTCUTS.map((s) => (
                     <button key={s.label} onClick={() => navigate(tab.id, s.url)}>
-                      <GlobeIcon />
+                      <Globe size={20} strokeWidth={1.6} />
                       <span>{s.label}</span>
                     </button>
                   ))}
@@ -316,40 +352,5 @@ export default function App() {
         )}
       </main>
     </div>
-  );
-}
-
-function GlobeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z" />
-    </svg>
-  );
-}
-
-function ChevronIcon({ direction }: { direction: "left" | "right" }) {
-  const d = direction === "left" ? "M13 5l-6 7 6 7" : "M11 5l6 7-6 7";
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d={d} />
-    </svg>
-  );
-}
-
-function ReloadIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 4v6h6M20 20v-6h-6" />
-      <path d="M5.5 15a8 8 0 1 0 1.7-9.1L4 9M18.5 9l2.5.9" />
-    </svg>
-  );
-}
-
-function BookmarkIcon({ filled }: { filled: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6">
-      <path d="M6 3h12v18l-6-4-6 4V3Z" />
-    </svg>
   );
 }

@@ -1,6 +1,6 @@
 // worker/src/rewriter.ts
 
-function toProxyUrl(base: string, target: string): string {
+export function toProxyUrl(base: string, target: string): string {
   try {
     if (
       !target ||
@@ -13,11 +13,6 @@ function toProxyUrl(base: string, target: string): string {
       return target;
     }
     const absolute = new URL(target, base).toString();
-    // Don't proxy Cloudflare challenge resources — they must load directly
-    // from challenges.cloudflare.com or the bot verification will fail.
-    if (absolute.includes("challenges.cloudflare.com")) {
-      return absolute;
-    }
     return `/proxy?url=${encodeURIComponent(absolute)}`;
   } catch {
     return target;
@@ -26,14 +21,14 @@ function toProxyUrl(base: string, target: string): string {
 
 const CSS_URL_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
-function rewriteCssText(css: string, baseUrl: string): string {
+export function rewriteCssText(css: string, baseUrl: string): string {
   return css.replace(CSS_URL_RE, (match, quote: string, url: string) => {
     if (url.startsWith("data:")) return match;
     return `url(${quote}${toProxyUrl(baseUrl, url)}${quote})`;
   });
 }
 
-function buildShim(baseUrl: string): string {
+export function buildShim(baseUrl: string): string {
   return `<script>
 (function () {
   var REAL_BASE = ${JSON.stringify(baseUrl)};
@@ -50,8 +45,6 @@ function buildShim(baseUrl: string): string {
           u.startsWith("blob:") || isProxied(u))
         return u;
       var abs = new URL(u, REAL_BASE).toString();
-      // Don't proxy Cloudflare challenge resources
-      if (abs.indexOf("challenges.cloudflare.com") !== -1) return abs;
       return "/proxy?url=" + encodeURIComponent(abs);
     } catch (e) { return u; }
   }
@@ -96,6 +89,108 @@ function buildShim(baseUrl: string): string {
   PatchedWebSocket.CLOSING = OrigWebSocket.CLOSING;
   PatchedWebSocket.CLOSED = OrigWebSocket.CLOSED;
   window.WebSocket = PatchedWebSocket;
+
+  // ---- Catch URLs the page's own JS assigns AFTER initial load ----
+  // The biggest source of "this bypassed the proxy" bugs: modern SPAs
+  // (YouTube's search results, infinite scroll, etc.) build DOM nodes
+  // in memory and set src/href/action once, directly — never through
+  // fetch/XHR, so the patches above never see it. Three layers here:
+  //  1. Element.prototype.setAttribute — catches the common path.
+  //  2. Property setters (img.src = ..., a.href = ..., etc.) — some
+  //     frameworks set the IDL property instead of calling setAttribute.
+  //  3. A MutationObserver backstop for nodes created via innerHTML /
+  //     insertAdjacentHTML / cloneNode, which set attributes through the
+  //     HTML parser directly, bypassing both of the above.
+  var TAG_URL_ATTR = {
+    A: "href", LINK: "href", SCRIPT: "src", IMG: "src", SOURCE: "src",
+    IFRAME: "src", FORM: "action", VIDEO: "src", AUDIO: "src",
+    EMBED: "src", TRACK: "src", OBJECT: "data",
+  };
+
+  function rewriteSrcsetValue(val) {
+    try {
+      return val.split(",").map(function (part) {
+        var bits = part.trim().split(/\s+/);
+        var url = toHttpProxy(bits[0]);
+        return bits[1] ? url + " " + bits[1] : url;
+      }).join(", ");
+    } catch (e) { return val; }
+  }
+
+  try {
+    var origSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      try {
+        var lname = String(name).toLowerCase();
+        if (TAG_URL_ATTR[this.tagName] === lname && typeof value === "string") {
+          value = toHttpProxy(value);
+        } else if (lname === "srcset" && typeof value === "string") {
+          value = rewriteSrcsetValue(value);
+        }
+      } catch (e) {}
+      return origSetAttribute.call(this, name, value);
+    };
+  } catch (e) {}
+
+  function patchUrlProperty(ctor, prop) {
+    try {
+      if (!ctor || !ctor.prototype) return;
+      var desc = Object.getOwnPropertyDescriptor(ctor.prototype, prop);
+      if (!desc || !desc.set || !desc.get) return;
+      Object.defineProperty(ctor.prototype, prop, {
+        configurable: true,
+        get: desc.get,
+        set: function (value) {
+          try {
+            if (typeof value === "string") value = toHttpProxy(value);
+          } catch (e) {}
+          desc.set.call(this, value);
+        },
+      });
+    } catch (e) {}
+  }
+  [
+    [window.HTMLImageElement, "src"], [window.HTMLScriptElement, "src"],
+    [window.HTMLIFrameElement, "src"], [window.HTMLSourceElement, "src"],
+    [window.HTMLMediaElement, "src"], [window.HTMLTrackElement, "src"],
+    [window.HTMLEmbedElement, "src"], [window.HTMLLinkElement, "href"],
+    [window.HTMLAnchorElement, "href"], [window.HTMLFormElement, "action"],
+    [window.HTMLObjectElement, "data"],
+  ].forEach(function (pair) { patchUrlProperty(pair[0], pair[1]); });
+
+  try {
+    function fixupElement(el) {
+      if (!el || !el.tagName || !el.getAttribute) return;
+      var attr = TAG_URL_ATTR[el.tagName];
+      if (attr) {
+        var val = el.getAttribute(attr);
+        if (val && !isProxied(val)) el.setAttribute(attr, val);
+      }
+      var srcset = el.getAttribute("srcset");
+      if (srcset && srcset.indexOf("/proxy?url=") === -1) {
+        el.setAttribute("srcset", srcset);
+      }
+    }
+    var mo = new MutationObserver(function (mutations) {
+      mutations.forEach(function (m) {
+        if (m.type === "attributes") {
+          fixupElement(m.target);
+        } else if (m.type === "childList") {
+          m.addedNodes.forEach(function (node) {
+            if (node.nodeType !== 1) return;
+            fixupElement(node);
+            if (node.querySelectorAll) {
+              node.querySelectorAll("[src],[href],[action],[data],[srcset]").forEach(fixupElement);
+            }
+          });
+        }
+      });
+    });
+    mo.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["src", "href", "action", "data", "srcset"],
+    });
+  } catch (e) {}
 
   // Service workers: rewrite the script URL through the proxy so the SW
   // itself is fetched via /proxy (its own fetch() calls are covered by
@@ -281,9 +376,13 @@ function buildShim(baseUrl: string): string {
     var href = link.getAttribute("href");
     if (!href || href === "#" || href.startsWith("javascript:") ||
         href.startsWith("data:") || isProxied(href)) return;
-    if (link.target === "_blank") return;
     e.preventDefault();
-    location.href = toHttpProxy(href);
+    var proxied = toHttpProxy(href);
+    if (link.target === "_blank") {
+      window.open(proxied, "_blank");
+    } else {
+      location.href = proxied;
+    }
   }, true);
 })();
 <\/script>`;
@@ -316,11 +415,14 @@ class SrcsetRewriter implements HTMLRewriterElementContentHandlers {
   element(el: Element) {
     const val = el.getAttribute("srcset");
     if (!val) return;
-    const rewritten = val.split(",").map((part) => {
-      const [url, descriptor] = part.trim().split(/\s+/, 2);
-      const proxied = toProxyUrl(this.baseUrl, url);
-      return descriptor ? `${proxied} ${descriptor}` : proxied;
-    }).join(", ");
+    const rewritten = val
+      .split(",")
+      .map((part) => {
+        const [url, descriptor] = part.trim().split(/\s+/, 2);
+        const proxied = toProxyUrl(this.baseUrl, url);
+        return descriptor ? `${proxied} ${descriptor}` : proxied;
+      })
+      .join(", ");
     el.setAttribute("srcset", rewritten);
   }
 }
@@ -336,7 +438,7 @@ class StyleAttrRewriter implements HTMLRewriterElementContentHandlers {
 class InlineStyleTextRewriter implements HTMLRewriterElementContentHandlers {
   private buffer = "";
   constructor(private baseUrl: string) {}
-  text(chunk: TextChunk) {
+  text(chunk: Text) {
     this.buffer += chunk.text;
     if (chunk.lastInTextNode) {
       chunk.replace(rewriteCssText(this.buffer, this.baseUrl), { html: false });
@@ -381,8 +483,4 @@ export function rewriteHtmlResponse(response: Response, baseUrl: string): Respon
   rewriter.on("meta", new BlockingMetaStripper());
   rewriter.on("base", new BaseStripper());
   return rewriter.transform(response);
-}
-
-export function rewriteCssTextExport(css: string, baseUrl: string): string {
-  return rewriteCssText(css, baseUrl);
 }

@@ -1,9 +1,9 @@
 :root {
-  --chrome-bg: #e8e8ea;
-  --chrome-bg-2: #dcdce0;
-  --tab-active: #f7f7f8;
-  --tab-inactive: #d3d3d8;
-  --border: #c6c6cb;
+  --chrome-bg: #ece9e4;
+  --toolbar-bg: #f6f4f1;
+  --tab-active: #f6f4f1;
+  --tab-inactive: #dedad3;
+  --border: #d3cec5;
   --text: #1d1d1f;
   --text-dim: #6e6e73;
   --accent: #0a7cff;
@@ -34,20 +34,19 @@ body {
   user-select: none;
 }
 
-/* ---- Title bar: traffic lights + tab strip ---- */
-.safari__titlebar {
+/* ---- Tab strip ---- */
+.safari__tabstrip {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
-  padding: 8px 10px 0;
-  background: linear-gradient(var(--chrome-bg), var(--chrome-bg-2));
-  border-bottom: 1px solid var(--border);
+  padding: 9px 10px 0;
+  background: var(--chrome-bg);
 }
 
 .safari__traffic {
   display: flex;
   gap: 8px;
-  padding: 0 4px 8px;
+  padding: 0 2px 9px;
   flex-shrink: 0;
 }
 
@@ -70,7 +69,7 @@ body {
 .safari__tabs {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
   overflow-x: auto;
   scrollbar-width: none;
@@ -83,11 +82,11 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 120px;
+  min-width: 130px;
   max-width: 220px;
   padding: 7px 10px;
   background: var(--tab-inactive);
-  border-radius: 8px 8px 0 0;
+  border-radius: 9px 9px 0 0;
   font-size: 12.5px;
   color: var(--text-dim);
   cursor: pointer;
@@ -99,6 +98,7 @@ body {
 .safari__tab--active {
   background: var(--tab-active);
   color: var(--text);
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04) inset;
 }
 
 .safari__tab-favicon {
@@ -116,15 +116,18 @@ body {
 }
 
 .safari__tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 15px;
-  line-height: 1;
   cursor: pointer;
   opacity: 0;
-  padding: 0 2px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 .safari__tab:hover .safari__tab-close {
   opacity: 0.6;
@@ -135,10 +138,12 @@ body {
 }
 
 .safari__tab-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 16px;
   width: 26px;
   height: 26px;
   border-radius: 6px;
@@ -165,116 +170,98 @@ body {
   }
 }
 
-/* ---- Toolbar: nav buttons + address bar + shortcuts ---- */
+/* ---- Unified toolbar ---- */
 .safari__toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--tab-active);
+  gap: 6px;
+  padding: 7px 10px;
+  background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border);
 }
 
-.safari__nav-buttons {
+.safari__icon-btn {
   display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.safari__nav-buttons button {
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-dim);
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   cursor: pointer;
+  flex-shrink: 0;
 }
-.safari__nav-buttons button:hover {
+.safari__icon-btn:hover {
   background: rgba(0, 0, 0, 0.06);
   color: var(--text);
 }
+.safari__icon-btn--active {
+  color: var(--accent);
+}
+.safari__icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.safari__icon-btn--inline {
+  width: 22px;
+  height: 22px;
+}
+
+.safari__nav-buttons {
+  display: flex;
+  gap: 0px;
+  flex-shrink: 0;
+}
+
+.safari__address-wrap {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
 
 .safari__address {
-  flex: 1 1 360px;
+  width: 100%;
+  max-width: 620px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 5px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0 8px;
-  min-width: 180px;
+  min-width: 120px;
+  height: 30px;
+}
+.safari__address-lock {
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  flex-shrink: 0;
 }
 .safari__address input {
   flex: 1;
   border: none;
   outline: none;
-  padding: 7px 2px;
+  padding: 0 2px;
   font-size: 13px;
   text-align: center;
   color: var(--text);
   background: transparent;
+  min-width: 0;
 }
 .safari__address input:focus {
   text-align: left;
-}
-.safari__reload,
-.safari__bookmark {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.safari__reload:hover,
-.safari__bookmark:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-.safari__bookmark--active {
-  color: var(--accent);
-}
-.safari__bookmark:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-.safari__shortcuts {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.safari__shortcuts button {
-  border: 1px solid var(--border);
-  background: #fff;
-  color: var(--text-dim);
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.safari__shortcuts button:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.safari__bookmarks-toggle--active {
-  color: var(--accent) !important;
-  border-color: var(--accent) !important;
 }
 
 .safari__bookmarks-bar {
   display: flex;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--tab-active);
+  background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   flex-shrink: 0;
@@ -348,9 +335,8 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  border: none;
-  background: #fff;
   border: 1px solid var(--border);
+  background: #fff;
   border-radius: 12px;
   padding: 18px 24px;
   color: var(--text-dim);

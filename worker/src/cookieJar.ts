@@ -6,7 +6,10 @@ const STORAGE_KEY = "jar";
 
 export class CookieJar extends DurableObject {
   async readStore(): Promise<Record<string, Record<string, string>>> {
-    return (await this.ctx.storage.get(STORAGE_KEY)) ?? {};
+    return ((await this.ctx.storage.get(STORAGE_KEY)) as Record<
+      string,
+      Record<string, string>
+    >) ?? {};
   }
 
   async getCookieHeader(origin: string): Promise<string> {
@@ -22,6 +25,7 @@ export class CookieJar extends DurableObject {
     if (setCookieHeaders.length === 0) return;
     const store = await this.readStore();
     const record = store[origin] ?? {};
+
     for (const header of setCookieHeaders) {
       const firstPart = header.split(";")[0]?.trim();
       if (!firstPart || !firstPart.includes("=")) continue;
@@ -29,12 +33,14 @@ export class CookieJar extends DurableObject {
       const name = firstPart.slice(0, eq).trim();
       const value = firstPart.slice(eq + 1).trim();
       if (!name) continue;
+
       if (isExpiredCookie(header)) {
         delete record[name];
       } else {
         record[name] = value;
       }
     }
+
     store[origin] = record;
     await this.ctx.storage.put(STORAGE_KEY, store);
   }
