@@ -1,6 +1,6 @@
 // worker/src/rewriter.ts
 
-export function toProxyUrl(base: string, target: string): string {
+function toProxyUrl(base: string, target: string): string {
   try {
     if (
       !target ||
@@ -13,6 +13,11 @@ export function toProxyUrl(base: string, target: string): string {
       return target;
     }
     const absolute = new URL(target, base).toString();
+    // Don't proxy Cloudflare challenge resources — they must load directly
+    // from challenges.cloudflare.com or the bot verification will fail.
+    if (absolute.includes("challenges.cloudflare.com")) {
+      return absolute;
+    }
     return `/proxy?url=${encodeURIComponent(absolute)}`;
   } catch {
     return target;
@@ -21,14 +26,14 @@ export function toProxyUrl(base: string, target: string): string {
 
 const CSS_URL_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
-export function rewriteCssText(css: string, baseUrl: string): string {
+function rewriteCssText(css: string, baseUrl: string): string {
   return css.replace(CSS_URL_RE, (match, quote: string, url: string) => {
     if (url.startsWith("data:")) return match;
     return `url(${quote}${toProxyUrl(baseUrl, url)}${quote})`;
   });
 }
 
-export function buildShim(baseUrl: string): string {
+function buildShim(baseUrl: string): string {
   return `<script>
 (function () {
   var REAL_BASE = ${JSON.stringify(baseUrl)};
@@ -45,6 +50,8 @@ export function buildShim(baseUrl: string): string {
           u.startsWith("blob:") || isProxied(u))
         return u;
       var abs = new URL(u, REAL_BASE).toString();
+      // Don't proxy Cloudflare challenge resources
+      if (abs.indexOf("challenges.cloudflare.com") !== -1) return abs;
       return "/proxy?url=" + encodeURIComponent(abs);
     } catch (e) { return u; }
   }
@@ -309,14 +316,11 @@ class SrcsetRewriter implements HTMLRewriterElementContentHandlers {
   element(el: Element) {
     const val = el.getAttribute("srcset");
     if (!val) return;
-    const rewritten = val
-      .split(",")
-      .map((part) => {
-        const [url, descriptor] = part.trim().split(/\s+/, 2);
-        const proxied = toProxyUrl(this.baseUrl, url);
-        return descriptor ? `${proxied} ${descriptor}` : proxied;
-      })
-      .join(", ");
+    const rewritten = val.split(",").map((part) => {
+      const [url, descriptor] = part.trim().split(/\s+/, 2);
+      const proxied = toProxyUrl(this.baseUrl, url);
+      return descriptor ? `${proxied} ${descriptor}` : proxied;
+    }).join(", ");
     el.setAttribute("srcset", rewritten);
   }
 }
@@ -332,7 +336,7 @@ class StyleAttrRewriter implements HTMLRewriterElementContentHandlers {
 class InlineStyleTextRewriter implements HTMLRewriterElementContentHandlers {
   private buffer = "";
   constructor(private baseUrl: string) {}
-  text(chunk: Text) {
+  text(chunk: TextChunk) {
     this.buffer += chunk.text;
     if (chunk.lastInTextNode) {
       chunk.replace(rewriteCssText(this.buffer, this.baseUrl), { html: false });
@@ -377,4 +381,8 @@ export function rewriteHtmlResponse(response: Response, baseUrl: string): Respon
   rewriter.on("meta", new BlockingMetaStripper());
   rewriter.on("base", new BaseStripper());
   return rewriter.transform(response);
+}
+
+export function rewriteCssTextExport(css: string, baseUrl: string): string {
+  return rewriteCssText(css, baseUrl);
 }
