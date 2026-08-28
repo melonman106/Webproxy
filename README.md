@@ -68,6 +68,20 @@ page (see `reportState()` in `rewriter.ts`).
   `text/*` bodies — not multipart, see Limitations).
 - **Redirect handling** (`Location` header rewritten, cookies preserved
   across the hop) and a `/clear-session` route to wipe a session's cookies.
+- **Dynamic DOM content stays inside the tunnel.** The single biggest
+  source of "this opened outside the proxy" bugs is JS that builds DOM
+  nodes in memory and assigns `src`/`href`/etc. directly — that never
+  goes through `fetch`/`XHR`, so the original shim never saw it. Three
+  layers now catch this: `Element.prototype.setAttribute` is patched,
+  the IDL property setters (`img.src = ...`, `a.href = ...`, etc.) are
+  patched, and a `MutationObserver` backstops anything set via
+  `innerHTML`/`insertAdjacentHTML`/`cloneNode` that bypasses both. Verified
+  against all three paths with a scripted test.
+- **`target="_blank"` links used to skip rewriting entirely** (a direct
+  proxy bypass) — fixed to open the proxied URL in a new tab via
+  `window.open` instead. The iframe's sandbox also now includes
+  `allow-popups-to-escape-sandbox` so those new tabs aren't crippled by
+  inherited sandbox restrictions.
 
 ## How cookies work
 
@@ -103,6 +117,17 @@ The `USER_DATA` KV namespace and `CookieJar` Durable Object are already
 wired up in `wrangler.toml`. If you fork this into a fresh Cloudflare
 account, create your own KV namespace (`wrangler kv namespace create
 USER_DATA`) and swap in the resulting `id`.
+
+## About the icons
+
+Uses `lucide-react` — genuinely open-source (ISC license), not Apple's
+SF Symbols. (If you're looking for that visual style specifically:
+OrchardKit/open-symbols converts several open-source icon sets,
+including Lucide, into Apple's `.symbols` format for use in native
+Apple apps — but the underlying icons are the same open-source ones
+used here, just repackaged for Xcode. Apple's actual proprietary SF
+Symbols glyphs aren't reusable outside Apple platform apps under
+Apple's license, so those aren't what's bundled here.)
 
 ## Real limitations — please read before relying on this
 
@@ -149,5 +174,3 @@ USER_DATA`) and swap in the resulting `id`.
   instead of regex for cases where the heuristic import rewriting falls
   short — meaningfully more engineering than this project currently
   invests, but the honest ceiling on how far pure text rewriting gets you.
-
-PLS CREDIT ME:)

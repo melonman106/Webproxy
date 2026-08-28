@@ -1,0 +1,88 @@
+name: Build Scramjet
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.12.1"
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          target: wasm32-unknown-unknown
+          override: true
+          components: rust-src
+
+      - name: Install WASM tools
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.105
+          cargo install --git https://github.com/r58playz/wasm-snip wasm-snip
+          sudo apt-get update -qq && sudo apt-get install -y -qq binaryen
+
+      - name: Clone Scramjet
+        run: git clone --depth 1 https://github.com/MercuryWorkshop/scramjet.git /tmp/scramjet
+
+      - name: Install dependencies
+        run: |
+          cd /tmp/scramjet
+          pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: |
+          cd /tmp/scramjet
+          echo "=== Building packages/core (wasm) ==="
+          cd packages/core
+          pnpm run rewriter:build
+          echo "=== Building packages/core (js) ==="
+          pnpm run build
+          cd /tmp/scramjet
+          for pkg in packages/*; do
+            if [ "$pkg" = "packages/core" ]; then continue; fi
+            if [ -f "$pkg/package.json" ]; then
+              HAS_BUILD=$(node -e "const p=require('./$pkg/package.json'); console.log(p.scripts && p.scripts.build ? 'yes' : 'no')")
+              if [ "$HAS_BUILD" = "yes" ]; then
+                echo "=== Building $pkg ==="
+                cd "$pkg"
+                pnpm run build
+                cd /tmp/scramjet
+              fi
+            fi
+          done
+
+      - name: List all build output
+        run: find /tmp/scramjet/packages -name "*.js" -path "*/dist/*" -o -name "*.mjs" -path "*/dist/*" -o -name "*.wasm" -path "*/dist/*" | head -50
+
+      - name: Copy built files
+        run: |
+          mkdir -p worker/src/scramjet
+          find /tmp/scramjet/packages \( -name "*.js" -o -name "*.mjs" -o -name "*.wasm" \) -path "*/dist/*" -print0 | while IFS= read -r -d '' f; do
+            cp "$f" "worker/src/scramjet/$(basename "$f")"
+          done
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add worker/src/scramjet/ -f
+          git diff --staged --quiet || git commit -m "chore: rebuild Scramjet"
+          git push
