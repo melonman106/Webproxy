@@ -26,7 +26,7 @@ const STRIPPED_RESPONSE_HEADERS = new Set([
   "transfer-encoding",
 ]);
 
-const FORWARD_REQUEST_HEADERS = new Set([
+var FORWARD_REQUEST_HEADERS = new Set([
   "user-agent",
   "accept",
   "accept-language",
@@ -34,6 +34,14 @@ const FORWARD_REQUEST_HEADERS = new Set([
   "range",
   "origin",
   "referer",
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "sec-fetch-user",
+  "sec-ch-ua",
+  "sec-ch-ua-mobile",
+  "sec-ch-ua-platform",
+  "priority",
 ]);
 
 function readSessionId(request: Request): { id: string; isNew: boolean } {
