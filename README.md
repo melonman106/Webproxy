@@ -129,6 +129,38 @@ used here, just repackaged for Xcode. Apple's actual proprietary SF
 Symbols glyphs aren't reusable outside Apple platform apps under
 Apple's license, so those aren't what's bundled here.)
 
+## Cloudflare platform limits (this is probably why "it works locally but not on Cloudflare")
+
+Cloudflare enforces resource limits **only on deployed Workers, not in
+local `wrangler dev`** — so something can pass every local test and still
+fail once it's live. The one most likely to bite this project:
+
+- **Workers Free: 10ms of CPU time per request.** This only counts actual
+  computation — waiting on `fetch()`, KV, or Durable Object calls doesn't
+  count against it. But the regex-based rewriting this proxy does on JS/CSS
+  responses (`rewriteJsUrls`, `rewriteCssText`) is real synchronous CPU
+  work, and large minified bundles (YouTube's JS chunks routinely run
+  several hundred KB to multiple MB) can plausibly eat that whole budget in
+  one response, returning Cloudflare's `Error 1102: Worker exceeded
+  resource limits` instead of the page.
+- **Mitigation already in place:** `MAX_TEXT_REWRITE_BYTES` (300 KB) in
+  `worker/src/index.ts` skips the regex rewriting pass for anything larger
+  and passes it through unmodified instead — some embedded URLs in huge
+  files may not get proxied, but the script loads rather than the whole
+  request failing outright. Tune this constant if you want to trade more
+  completeness for more CPU risk, or the reverse.
+- **The real fix, if you hit this a lot: upgrade to Workers Paid** ($5/mo
+  base). Default CPU time jumps to 30 seconds, configurable up to 5 minutes
+  via `[limits] cpu_ms` in `wrangler.toml` (commented out there already —
+  just uncomment). That's a different order of magnitude of headroom for
+  this kind of workload.
+- Other Free-tier limits (100k requests/day, 50 subrequests/request, 3 MB
+  Worker bundle size) are unlikely to be the bottleneck for this project as
+  currently built — the proxy does one upstream fetch + one cookie-jar
+  Durable Object call per request (2 subrequests), and the Worker bundle
+  itself (no heavy server-side dependencies — `HTMLRewriter` is native) is
+  small.
+
 ## Real limitations — please read before relying on this
 
 - **YouTube** remains the hardest case. Its Polymer-based frontend does

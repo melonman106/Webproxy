@@ -18,3 +18,10 @@ new_sqlite_classes = ["CookieJar"]
 [[kv_namespaces]]
 binding = "USER_DATA"
 id = "fbe05d6ecd5b47668ea0b8ca95399fed"
+
+# Workers Free is capped at 10ms CPU time per request regardless of what's
+# set here. If you're on Workers Paid (default 30s, configurable up to 5
+# minutes), uncomment this to give the rewriting logic more headroom on
+# large JS bundles — see README "Cloudflare platform limits" section.
+# [limits]
+# cpu_ms = 50

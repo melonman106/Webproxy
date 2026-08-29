@@ -1,11 +1,11 @@
 :root {
-  --chrome-bg: #ece9e4;
-  --toolbar-bg: #f6f4f1;
-  --tab-active: #f6f4f1;
-  --tab-inactive: #dedad3;
-  --border: #d3cec5;
+  --glass-tint: 255, 255, 255;
+  --glass-bg: rgba(var(--glass-tint), 0.55);
+  --glass-bg-strong: rgba(var(--glass-tint), 0.78);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-divider: rgba(0, 0, 0, 0.07);
   --text: #1d1d1f;
-  --text-dim: #6e6e73;
+  --text-dim: #5b5b60;
   --accent: #0a7cff;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
 }
@@ -24,29 +24,67 @@ body,
 body {
   font-family: var(--font);
   color: var(--text);
-  background: var(--chrome-bg);
 }
 
 .safari {
-  display: flex;
-  flex-direction: column;
+  position: relative;
   height: 100vh;
+  overflow: hidden;
   user-select: none;
+  background: radial-gradient(120% 120% at 20% 0%, #ffd6a5 0%, #ff9a8b 22%, #a78bfa 55%, #5b8def 80%, #3a5bc7 100%);
+}
+
+/* ---- Full-bleed content, chrome floats above it ---- */
+.safari__viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.safari__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: none;
+  background: #fff;
+}
+.safari__frame--active {
+  display: block;
+}
+
+/* ---- Floating glass chrome ---- */
+.safari__chrome {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 20;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 /* ---- Tab strip ---- */
 .safari__tabstrip {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
-  padding: 9px 10px 0;
-  background: var(--chrome-bg);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--glass-divider);
 }
 
 .safari__traffic {
   display: flex;
   gap: 8px;
-  padding: 0 2px 9px;
+  padding: 0 2px;
   flex-shrink: 0;
 }
 
@@ -55,6 +93,7 @@ body {
   height: 12px;
   border-radius: 50%;
   display: inline-block;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
 }
 .dot--red {
   background: #ff5f57;
@@ -68,8 +107,8 @@ body {
 
 .safari__tabs {
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
+  align-items: center;
+  gap: 4px;
   flex: 1;
   overflow-x: auto;
   scrollbar-width: none;
@@ -85,20 +124,29 @@ body {
   min-width: 130px;
   max-width: 220px;
   padding: 7px 10px;
-  background: var(--tab-inactive);
-  border-radius: 9px 9px 0 0;
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 11px;
   font-size: 12.5px;
   color: var(--text-dim);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+.safari__tab:hover {
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .safari__tab--active {
-  background: var(--tab-active);
+  background: var(--glass-bg-strong);
   color: var(--text);
-  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04) inset;
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.safari__tab--active:hover {
+  background: var(--glass-bg-strong);
 }
 
 .safari__tab-favicon {
@@ -126,15 +174,15 @@ body {
   opacity: 0;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 .safari__tab:hover .safari__tab-close {
-  opacity: 0.6;
+  opacity: 0.65;
 }
 .safari__tab-close:hover {
   opacity: 1 !important;
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.12);
 }
 
 .safari__tab-new {
@@ -146,13 +194,12 @@ body {
   color: var(--text-dim);
   width: 26px;
   height: 26px;
-  border-radius: 6px;
+  border-radius: 50%;
   cursor: pointer;
   flex-shrink: 0;
-  margin-bottom: 4px;
 }
 .safari__tab-new:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.4);
 }
 
 .spinner {
@@ -176,8 +223,6 @@ body {
   align-items: center;
   gap: 6px;
   padding: 7px 10px;
-  background: var(--toolbar-bg);
-  border-bottom: 1px solid var(--border);
 }
 
 .safari__icon-btn {
@@ -189,13 +234,17 @@ body {
   color: var(--text-dim);
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 50%;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background 0.12s ease;
 }
 .safari__icon-btn:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.45);
   color: var(--text);
+}
+.safari__icon-btn:active {
+  background: rgba(255, 255, 255, 0.65);
 }
 .safari__icon-btn--active {
   color: var(--accent);
@@ -229,12 +278,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 9px;
   padding: 0 8px;
   min-width: 120px;
   height: 30px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .safari__address-lock {
   display: flex;
@@ -260,27 +310,25 @@ body {
 .safari__bookmarks-bar {
   display: flex;
   gap: 6px;
-  padding: 6px 12px;
-  background: var(--toolbar-bg);
-  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  border-top: 1px solid var(--glass-divider);
   overflow-x: auto;
-  flex-shrink: 0;
 }
 .safari__bookmarks-bar button {
   display: flex;
   align-items: center;
   gap: 5px;
-  border: none;
-  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.3);
   color: var(--text-dim);
   font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
 }
 .safari__bookmarks-bar button:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.5);
   color: var(--text);
 }
 .safari__hint {
@@ -289,25 +337,7 @@ body {
   align-self: center;
 }
 
-/* ---- Content ---- */
-.safari__viewport {
-  position: relative;
-  flex: 1;
-  background: #fff;
-}
-
-.safari__frame {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: none;
-  display: none;
-}
-.safari__frame--active {
-  display: block;
-}
-
+/* ---- Start page (shown behind the glass chrome when no tab is loaded) ---- */
 .safari__start-page {
   position: absolute;
   inset: 0;
@@ -316,15 +346,16 @@ body {
   align-items: center;
   justify-content: center;
   gap: 24px;
-  padding: 40px;
+  padding: 120px 40px 40px;
   text-align: center;
-  color: var(--text);
+  color: #fff;
 }
 .safari__start-page h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 26px;
+  font-weight: 700;
   margin: 0;
-  color: var(--text-dim);
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
 }
 .safari__start-shortcuts {
   display: flex;
@@ -335,25 +366,32 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 12px;
-  padding: 18px 24px;
-  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 16px;
+  padding: 20px 26px;
+  color: #fff;
   cursor: pointer;
   font-size: 12.5px;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
 .safari__start-shortcuts button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.35);
+  transform: translateY(-2px);
 }
 .safari__start-page .safari__hint {
   max-width: 420px;
   line-height: 1.5;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation: none;
+  }
+  .safari__start-shortcuts button {
+    transition: none;
   }
 }
