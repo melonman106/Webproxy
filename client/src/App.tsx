@@ -10,6 +10,9 @@ import {
   Globe,
   PanelLeft,
   Lock,
+  Settings,
+  Moon,
+  Sun,
 } from "lucide-react";
 
 interface Tab {
@@ -33,6 +36,9 @@ const SHORTCUTS = [
   { label: "YouTube", url: "https://www.youtube.com" },
 ];
 
+const THEME_KEY = "tunnel:theme";
+const START_URL_KEY = "tunnel:customStartUrl";
+
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -54,6 +60,12 @@ function hostnameOf(realUrl: string): string {
   }
 }
 
+function loadTheme(): "light" | "dark" {
+  const stored = localStorage.getItem(THEME_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 let tabCounter = 0;
 function newTab(realUrl: string | null): Tab {
   tabCounter += 1;
@@ -69,14 +81,25 @@ function newTab(realUrl: string | null): Tab {
 }
 
 export default function App() {
-  const [tabs, setTabs] = useState<Tab[]>(() => [newTab(null)]);
+  const [customStartUrl, setCustomStartUrl] = useState<string | null>(() =>
+    localStorage.getItem(START_URL_KEY)
+  );
+  const [tabs, setTabs] = useState<Tab[]>(() => [newTab(customStartUrl)]);
   const [activeId, setActiveId] = useState(tabs[0].id);
   const [bookmarks, setBookmarks] = useState<HistoryEntry[]>([]);
   const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [startUrlInput, setStartUrlInput] = useState(customStartUrl ?? "");
   const [addressFocused, setAddressFocused] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(loadTheme);
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({});
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? tabs[0];
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -131,7 +154,7 @@ export default function App() {
     });
   }
 
-  function openTab(realUrl: string | null = null) {
+  function openTab(realUrl: string | null = customStartUrl) {
     const tab = newTab(realUrl);
     setTabs((prev) => [...prev, tab]);
     setActiveId(tab.id);
@@ -142,7 +165,7 @@ export default function App() {
       const idx = prev.findIndex((t) => t.id === id);
       const next = prev.filter((t) => t.id !== id);
       if (next.length === 0) {
-        const fresh = newTab(null);
+        const fresh = newTab(customStartUrl);
         if (activeId === id) setActiveId(fresh.id);
         return [fresh];
       }
@@ -185,50 +208,31 @@ export default function App() {
     }
   }
 
+  function saveStartUrl() {
+    const trimmed = startUrlInput.trim();
+    if (!trimmed) {
+      localStorage.removeItem(START_URL_KEY);
+      setCustomStartUrl(null);
+      return;
+    }
+    const normalized = normalizeUrl(trimmed);
+    localStorage.setItem(START_URL_KEY, normalized);
+    setCustomStartUrl(normalized);
+    setStartUrlInput(normalized);
+  }
+
+  function clearStartUrl() {
+    localStorage.removeItem(START_URL_KEY);
+    setCustomStartUrl(null);
+    setStartUrlInput("");
+  }
+
   const isBookmarked = bookmarks.some((b) => b.url === activeTab.realUrl);
   const isSecure = activeTab.realUrl.startsWith("https://");
 
   return (
     <div className="safari">
-      <main className="safari__viewport">
-        {tabs.map((tab) =>
-          tab.proxiedUrl ? (
-            <iframe
-              key={tab.id}
-              ref={(el) => {
-                iframeRefs.current[tab.id] = el;
-              }}
-              src={tab.proxiedUrl}
-              title={tab.title}
-              className={tab.id === activeId ? "safari__frame safari__frame--active" : "safari__frame"}
-              onLoad={() => updateTab(tab.id, { loading: false })}
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-popups-to-escape-sandbox"
-            />
-          ) : (
-            tab.id === activeId && (
-              <div key={tab.id} className="safari__start-page">
-                <h1>Start Page</h1>
-                <div className="safari__start-shortcuts">
-                  {SHORTCUTS.map((s) => (
-                    <button key={s.label} onClick={() => navigate(tab.id, s.url)}>
-                      <Globe size={20} strokeWidth={1.6} />
-                      <span>{s.label}</span>
-                    </button>
-                  ))}
-                </div>
-                <p className="safari__hint">
-                  DuckDuckGo's HTML endpoint proxies cleanly. Google and
-                  YouTube use heavy bot detection and dynamic loading that a
-                  rewriting proxy can only partially replicate.
-                </p>
-              </div>
-            )
-          )
-        )}
-      </main>
-
-      {/* Floating glass chrome — sits above the viewport so the blur
-          picks up real page content underneath it, not an opaque backdrop. */}
+      {/* Glass chrome — normal document flow, does not overlap content */}
       <div className="safari__chrome">
         <div className="safari__tabstrip">
           <div className="safari__traffic">
@@ -260,7 +264,7 @@ export default function App() {
                 </button>
               </div>
             ))}
-            <button className="safari__tab-new" onClick={() => openTab(null)} aria-label="New tab">
+            <button className="safari__tab-new" onClick={() => openTab()} aria-label="New tab">
               <Plus size={14} strokeWidth={2} />
             </button>
           </div>
@@ -270,7 +274,7 @@ export default function App() {
           <button
             className="safari__icon-btn"
             onClick={() => setShowBookmarks((v) => !v)}
-            aria-label="Toggle bookmarks sidebar"
+            aria-label="Toggle bookmarks bar"
           >
             <PanelLeft size={16} strokeWidth={1.8} />
           </button>
@@ -335,9 +339,51 @@ export default function App() {
             <Share size={16} strokeWidth={1.8} />
           </button>
 
-          <button className="safari__icon-btn" onClick={() => openTab(null)} aria-label="New tab">
+          <button className="safari__icon-btn" onClick={() => openTab()} aria-label="New tab">
             <Plus size={16} strokeWidth={1.8} />
           </button>
+
+          <div className="safari__settings-wrap">
+            <button
+              className={`safari__icon-btn ${showSettings ? "safari__icon-btn--active" : ""}`}
+              onClick={() => setShowSettings((v) => !v)}
+              aria-label="Settings"
+            >
+              <Settings size={16} strokeWidth={1.8} />
+            </button>
+
+            {showSettings && (
+              <div className="safari__settings-popover">
+                <div className="safari__settings-row">
+                  <span>Appearance</span>
+                  <button
+                    className="safari__theme-toggle"
+                    onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+                  >
+                    {theme === "dark" ? <Moon size={14} strokeWidth={1.8} /> : <Sun size={14} strokeWidth={1.8} />}
+                    {theme === "dark" ? "Dark" : "Light"}
+                  </button>
+                </div>
+                <div className="safari__settings-row safari__settings-row--stack">
+                  <span>Start page</span>
+                  <div className="safari__settings-start-input">
+                    <input
+                      value={startUrlInput}
+                      onChange={(e) => setStartUrlInput(e.target.value)}
+                      placeholder="e.g. example.com"
+                      spellCheck={false}
+                    />
+                    <button onClick={saveStartUrl}>Save</button>
+                  </div>
+                  {customStartUrl && (
+                    <button className="safari__settings-clear" onClick={clearStartUrl}>
+                      Reset to default start page
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {showBookmarks && (
@@ -351,6 +397,47 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Page content — one iframe per tab, only the active one visible.
+          All tabs stay mounted so background tabs keep their state. */}
+      <main className="safari__viewport">
+        {tabs.map((tab) =>
+          tab.proxiedUrl ? (
+            <iframe
+              key={tab.id}
+              ref={(el) => {
+                iframeRefs.current[tab.id] = el;
+              }}
+              src={tab.proxiedUrl}
+              title={tab.title}
+              className={tab.id === activeId ? "safari__frame safari__frame--active" : "safari__frame"}
+              onLoad={() => updateTab(tab.id, { loading: false })}
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-popups-to-escape-sandbox"
+            />
+          ) : (
+            tab.id === activeId && (
+              <div key={tab.id} className="safari__start-page">
+                <h1>Start Page</h1>
+                <div className="safari__start-shortcuts">
+                  {SHORTCUTS.map((s) => (
+                    <button key={s.label} onClick={() => navigate(tab.id, s.url)}>
+                      <Globe size={20} strokeWidth={1.6} />
+                      <span>{s.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="safari__hint">
+                  DuckDuckGo's HTML endpoint proxies cleanly. Google and
+                  YouTube use heavy bot detection and dynamic loading that a
+                  rewriting proxy can only partially replicate. Set a custom
+                  start page from the settings (gear icon) if you'd rather
+                  open somewhere specific by default.
+                </p>
+              </div>
+            )
+          )
+        )}
+      </main>
     </div>
   );
 }
