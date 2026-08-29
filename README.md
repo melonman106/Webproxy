@@ -46,7 +46,8 @@ page (see `reportState()` in `rewriter.ts`).
   `export` specifiers, dynamic `import()`, and `//# sourceMappingURL=`
   comments are all rewritten to resolve against the real page instead
   of the proxy path. This is regex-based, not a real parser — see
-  Limitations.
+  Limitations. **Deliberately not applied to `application/json`
+  responses** — see the note below, this was the cause of a real bug.
 - **WebSocket proxying**, both for the page's own `fetch`-based sockets
   (patched in the shim) and pages that use `new WebSocket(...)`.
 - **Cookies persist server-side** in a Durable Object (`CookieJar`), one
@@ -82,6 +83,20 @@ page (see `reportState()` in `rewriter.ts`).
   `window.open` instead. The iframe's sandbox also now includes
   `allow-popups-to-escape-sandbox` so those new tabs aren't crippled by
   inherited sandbox restrictions.
+- **JSON API responses are no longer regex-rewritten** (fixed a real bug).
+  They used to get the same absolute-URL rewriting pass as JS files, which
+  is risky: complex API payloads (YouTube's search results being the
+  motivating case) contain opaque continuation tokens, tracking IDs, and
+  other strings that can coincidentally contain an `https://`-looking
+  substring without being a URL the client intends to navigate to. If the
+  client validates one of those fields strictly and our rewrite mangled
+  it, the client's own JS could throw mid-render — observed as: YouTube
+  search produces a blank/white result area and the address bar never
+  updates (because the failure happens before the success path that would
+  call `history.pushState` even runs). JSON responses now pass through
+  byte-for-byte unmodified; URLs embedded in JSON still get proxied once
+  the page's own JS applies them to real DOM elements, via the
+  `setAttribute`/property-setter/`MutationObserver` shim described above.
 
 ## How cookies work
 

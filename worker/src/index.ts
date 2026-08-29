@@ -212,7 +212,19 @@ async function handleHttpProxy(
     });
   }
 
-  if (contentType.includes("javascript") || contentType.includes("application/json")) {
+  // Note: application/json is deliberately NOT rewritten here, even
+  // though it may contain absolute URLs (e.g. thumbnail links in an API
+  // response). Regex-rewriting arbitrary API payloads risks corrupting
+  // opaque tokens, continuation cursors, or signed values that happen to
+  // contain "https://" substrings but aren't meant to be treated as
+  // navigable URLs — if the client validates those strictly, a single
+  // mangled field can throw and abort rendering entirely (this was the
+  // cause of a YouTube-search "white screen, URL never updates" bug:
+  // the search results JSON got corrupted before YouTube's own render
+  // logic could run). URLs embedded in JSON still get proxied once the
+  // page's own JS applies them to real DOM elements — see the
+  // setAttribute/property-setter/MutationObserver shim below.
+  if (contentType.includes("javascript")) {
     const text = await upstream.text();
     // Regex-based rewriting over a full buffer is real CPU work, and
     // Cloudflare Workers Free enforces only 10ms of CPU time per request
