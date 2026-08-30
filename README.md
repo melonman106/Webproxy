@@ -97,6 +97,65 @@ page (see `reportState()` in `rewriter.ts`).
   byte-for-byte unmodified; URLs embedded in JSON still get proxied once
   the page's own JS applies them to real DOM elements, via the
   `setAttribute`/property-setter/`MutationObserver` shim described above.
+- **Shim injection now survives pages missing an explicit `<head>` tag**
+  (fixed a real bug, found via testing — see "Testing done this round"
+  below). It used to only listen for `head`, and `HTMLRewriter` matches
+  the literal byte stream — a page whose source genuinely omits `<head>`
+  (more common than you'd think: minimal hand-written HTML, some
+  server-generated fragments) never fired that selector at all, even
+  though a real browser auto-vivifies a `<head>` and renders fine. Such
+  pages silently got **zero** shim protection — no fetch/XHR/WebSocket/
+  DOM-mutation interception. Fixed by falling back through
+  `head -> html -> body`, injecting at the first one found.
+
+## Testing done this round (and its real limits)
+
+A thorough pass was made to exercise every code path, including several
+that had never been run end-to-end before. Everything below was run
+against a real `wrangler dev` instance and, where noted, a real
+Chromium browser via Playwright — not just code review:
+
+- **Redirect following**, **Range request passthrough** (video byte-
+  ranges), **gzip auto-decode + rewrite**, and **multiple `Set-Cookie`
+  headers in one response** (including correct deletion of an already-
+  expired cookie) — all confirmed correct.
+- **WebSocket proxying, both directions**: a raw WebSocket client
+  connecting through `/proxy?url=ws://...` to a real echo server (full
+  message round-trip, clean close) — the server-side tunnel had existed
+  in code since an earlier round but was never actually run until now.
+- **The client-side WebSocket shim**, in a real browser: a proxied
+  page's own `new WebSocket(...)` call correctly rewritten and tunneled
+  through, verified via the DOM updating to reflect a successful
+  round-trip — not just that the code compiled.
+- **Service Worker registration**, in a real browser: `navigator.
+  serviceWorker.register(...)` correctly rewritten and resolved,
+  confirmed via the resulting registration's actual `scope`.
+- **The DOM-mutation bypass fix** (setAttribute / property-setter /
+  MutationObserver), upgraded from an earlier jsdom-only test to a real
+  Chromium browser running the full worker pipeline — same result,
+  higher confidence.
+- **The full app**, end-to-end: loaded the real client UI, navigated via
+  the actual address bar to a real backing page, and confirmed the tab
+  title and page content both render correctly together.
+
+**What this round could NOT test, and why** — worth being direct about:
+this sandbox's network egress is allowlisted to a small set of domains
+(package registries, GitHub) and does not include youtube.com,
+google.com, or duckduckgo.com, so neither `wrangler dev` nor any HTTP
+tool here can reach those sites directly. Attempts to route around this
+via search-and-fetch tools also hit real walls: YouTube rate-limited
+(HTTP 429) every fetch attempt, even from Anthropic's own fetch
+infrastructure, across multiple different video URLs; Google's and
+YouTube's own homepages aren't indexed as fetchable "documents" by the
+search backend at all (there's essentially no text content on a search
+box to index); and even where a real page *was* fetchable, the fetch
+tool returns cleaned/extracted text for reading, not raw HTML bytes, so
+it can't be fed into `HTMLRewriter` for a rewriting test anyway. In
+short: this round substantially hardened the general-purpose rewriting
+and proxying machinery (and found a real, previously-invisible bug
+doing it), but a genuine end-to-end confirmation against production
+YouTube/Google specifically still requires testing on your live
+deployment — that's not something achievable from this environment.
 
 ## How cookies work
 

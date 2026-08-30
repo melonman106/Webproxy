@@ -449,9 +449,21 @@ class InlineStyleTextRewriter implements HTMLRewriterElementContentHandlers {
   }
 }
 
-class HeadShimInjector implements HTMLRewriterElementContentHandlers {
-  constructor(private baseUrl: string) {}
+/** Injects the shim exactly once, as early as possible, regardless of
+ * which structural tags the source document actually includes. Relying
+ * on "head" alone is not safe: HTMLRewriter matches the literal byte
+ * stream, so a page missing an explicit <head> (surprisingly common —
+ * minimal/hand-written HTML, some server-generated fragments) never
+ * fires that selector at all, even though a real browser would auto-
+ * vivify a <head> and render fine. That silently left such pages with
+ * zero shim protection (no fetch/XHR/WebSocket/DOM-mutation coverage).
+ * Falling back through head -> html -> body covers every realistic
+ * document shape; a shared flag ensures only the first match injects. */
+class ShimInjector implements HTMLRewriterElementContentHandlers {
+  constructor(private baseUrl: string, private state: { injected: boolean }) {}
   element(el: Element) {
+    if (this.state.injected) return;
+    this.state.injected = true;
     el.prepend(buildShim(this.baseUrl), { html: true });
   }
 }
@@ -479,7 +491,10 @@ export function rewriteHtmlResponse(response: Response, baseUrl: string): Respon
   rewriter.on("[srcset]", new SrcsetRewriter(baseUrl));
   rewriter.on("[style]", new StyleAttrRewriter(baseUrl));
   rewriter.on("style", new InlineStyleTextRewriter(baseUrl));
-  rewriter.on("head", new HeadShimInjector(baseUrl));
+  const shimState = { injected: false };
+  rewriter.on("head", new ShimInjector(baseUrl, shimState));
+  rewriter.on("html", new ShimInjector(baseUrl, shimState));
+  rewriter.on("body", new ShimInjector(baseUrl, shimState));
   rewriter.on("meta", new BlockingMetaStripper());
   rewriter.on("base", new BaseStripper());
   return rewriter.transform(response);
